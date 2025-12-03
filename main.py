@@ -31,6 +31,24 @@ if sys.platform == 'darwin' and 'saved_stderr' in dir() and saved_stderr is not 
     os.dup2(saved_stderr, 2)
     os.close(saved_stderr)
 
+
+def _suppress_macos_warning(func):
+    """Wrapper um macOS Cocoa-Warnungen bei Dateidialogen zu unterdrücken."""
+    if sys.platform != 'darwin':
+        return func()
+
+    # Unterdrücke stderr während des Dialogs
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        return func()
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+
+
 from parser import parse_equations, validate_system
 from solver import solve_system, solve_parametric, format_solution
 import numpy as np
@@ -552,11 +570,11 @@ BEISPIELE:
             ("Text Files", "*.txt"),
             ("All Files", "*.*")
         ]
-        filepath = filedialog.askopenfilename(
+        filepath = _suppress_macos_warning(lambda: filedialog.askopenfilename(
             title="Datei öffnen",
             filetypes=filetypes,
             defaultextension=".tes"
-        )
+        ))
 
         if filepath:
             try:
@@ -586,11 +604,11 @@ BEISPIELE:
             ("Text Files", "*.txt"),
             ("All Files", "*.*")
         ]
-        filepath = filedialog.asksaveasfilename(
+        filepath = _suppress_macos_warning(lambda: filedialog.asksaveasfilename(
             title="Datei speichern",
             filetypes=filetypes,
             defaultextension=".tes"
-        )
+        ))
 
         if filepath:
             self._save_to_file(filepath)
