@@ -37,6 +37,11 @@ RADIATION_FUNCTIONS = {
     'eb', 'blackbody', 'blackbody_cumulative', 'wien', 'stefan_boltzmann'
 }
 
+# Humid Air Functions
+HUMID_AIR_FUNCTIONS = {
+    'humidair'
+}
+
 # Mapping von EES-Syntax zu Python
 FUNCTION_MAP = {
     'ln': 'log',      # ln -> numpy.log
@@ -181,6 +186,60 @@ def convert_thermo_call(match) -> str:
     return f"{func_name}({', '.join(new_args)})"
 
 
+def convert_humid_air_call(match) -> str:
+    """
+    Converts a HumidAir function call from EES to Python syntax.
+
+    EES:    HumidAir(h, T=25, rh=0.5, p_tot=1)
+    Python: HumidAir('h', T=25, rh=0.5, p_tot=1)
+
+    EES:    w = HumidAir(w, T=30, rh=0.6, p_tot=1)
+    Python: w = HumidAir('w', T=30, rh=0.6, p_tot=1)
+    """
+    func_name = match.group(1)  # Behalte Groß-/Kleinschreibung
+    args_str = match.group(2)
+
+    # Parse die Argumente
+    # Erstes Argument ist die Output-Eigenschaft (h, phi, x, etc.)
+    # Weitere Argumente sind key=value Paare
+
+    args = []
+    current_arg = ""
+    paren_depth = 0
+
+    for char in args_str:
+        if char == '(':
+            paren_depth += 1
+            current_arg += char
+        elif char == ')':
+            paren_depth -= 1
+            current_arg += char
+        elif char == ',' and paren_depth == 0:
+            args.append(current_arg.strip())
+            current_arg = ""
+        else:
+            current_arg += char
+
+    if current_arg.strip():
+        args.append(current_arg.strip())
+
+    if len(args) < 1:
+        return match.group(0)  # Unverändert zurückgeben
+
+    # Erstes Argument ist die Output-Eigenschaft - in Anführungszeichen setzen
+    output_prop = args[0]
+    # Prüfe ob bereits in Anführungszeichen
+    if not (output_prop.startswith("'") or output_prop.startswith('"')):
+        output_prop = f"'{output_prop}'"
+
+    # Restliche Argumente (key=value Paare)
+    rest_args = args[1:]
+
+    # Rekonstruiere den Aufruf
+    new_args = [output_prop] + rest_args
+    return f"{func_name}({', '.join(new_args)})"
+
+
 def tokenize_equation(equation: str) -> str:
     """Konvertiert EES-Syntax zu Python-Syntax."""
     # Ersetze ^ durch **
@@ -197,6 +256,11 @@ def tokenize_equation(equation: str) -> str:
     for func in THERMO_FUNCTIONS:
         pattern = rf'\b({func})\s*\(([^)]*)\)'
         equation = re.sub(pattern, convert_thermo_call, equation, flags=re.IGNORECASE)
+
+    # Konvertiere FeuchteLuft-Funktionsaufrufe
+    for func in HUMID_AIR_FUNCTIONS:
+        pattern = rf'\b({func})\s*\(([^)]*)\)'
+        equation = re.sub(pattern, convert_humid_air_call, equation, flags=re.IGNORECASE)
 
     return equation
 
@@ -221,6 +285,19 @@ def extract_variables(equation: str) -> Set[str]:
             replacement = ' '.join(str(v) for v in values if not v.replace('.', '').isdigit())
             temp_eq = temp_eq.replace(match, replacement)
 
+    # Entferne komplette FeuchteLuft-Funktionsaufrufe
+    # Pattern: FeuchteLuft('eigenschaft', key1=val1, key2=val2, key3=val3)
+    for func in HUMID_AIR_FUNCTIONS:
+        pattern = rf"\b{func}\s*\([^)]*\)"
+        matches = re.findall(pattern, temp_eq, flags=re.IGNORECASE)
+
+        for match in matches:
+            # Extrahiere die Werte aus key=value Paaren
+            values = re.findall(r'[a-zA-Z_][a-zA-Z0-9_]*\s*=\s*([a-zA-Z_][a-zA-Z0-9_]*|\d+\.?\d*)', match)
+            # Ersetze den kompletten Funktionsaufruf durch die Werte
+            replacement = ' '.join(str(v) for v in values if not v.replace('.', '').isdigit())
+            temp_eq = temp_eq.replace(match, replacement)
+
     # Entferne Funktionsnamen aus der Suche
     for func in MATH_FUNCTIONS:
         temp_eq = re.sub(rf'\b{func}\b', '', temp_eq)
@@ -229,6 +306,9 @@ def extract_variables(equation: str) -> Set[str]:
         temp_eq = re.sub(rf'\b{func}\b', '', temp_eq, flags=re.IGNORECASE)
 
     for func in RADIATION_FUNCTIONS:
+        temp_eq = re.sub(rf'\b{func}\b', '', temp_eq, flags=re.IGNORECASE)
+
+    for func in HUMID_AIR_FUNCTIONS:
         temp_eq = re.sub(rf'\b{func}\b', '', temp_eq, flags=re.IGNORECASE)
 
     # Finde alle Bezeichner (Variablen)
@@ -245,6 +325,7 @@ def extract_variables(equation: str) -> Set[str]:
     variables -= MATH_FUNCTIONS
     variables -= THERMO_FUNCTIONS
     variables -= RADIATION_FUNCTIONS
+    variables -= HUMID_AIR_FUNCTIONS
 
     return variables
 

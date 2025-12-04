@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Equation Solver - Ein EES-ähnlicher Gleichungslöser
+HVAC Equation Solver - Ein EES-ähnlicher Gleichungslöser
 
 Hauptanwendung mit grafischer Benutzeroberfläche.
 """
@@ -78,7 +78,7 @@ class EquationSolverApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Equation Solver")
+        self.root.title("HVAC Equation Solver")
         self.root.geometry("900x700")
         self.root.minsize(600, 400)
 
@@ -313,7 +313,7 @@ class EquationSolverApp:
     def _insert_example(self):
         """Fügt ein Beispiel mit Thermodynamik ein."""
         if THERMO_AVAILABLE:
-            example = '''"Equation Solver - Beispiel"
+            example = '''"HVAC Equation Solver - Beispiel"
 "Einheiten: T[C], p[bar], h[kJ/kg], s[kJ/(kg K)], rho[kg/m3]"
 
 {--- Beispiel 1: Wasser Stoffdaten ---}
@@ -402,7 +402,7 @@ q_zu = h2 - h1
         text = scrolledtext.ScrolledText(help_window, font=("Courier", 10))
         text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        help_text = """=== EQUATION SOLVER - FUNCTION REFERENCE ===
+        help_text = """=== HVAC EQUATION SOLVER - FUNCTION REFERENCE ===
 
 MATHEMATISCHE FUNKTIONEN:
 -------------------------
@@ -465,6 +465,37 @@ Beispiele:
   h = enthalpy(water, T=100, p=1)
   rho = density(R134a, T=25, x=1)
   T = temperature(water, p=10, h=2700)
+
+HUMID AIR FUNCTIONS (CoolProp HumidAirProp):
+--------------------------------------------
+Syntax: HumidAir(property, T=..., rh=..., p_tot=...)
+
+Output Properties (first argument):
+  h        Specific enthalpy [kJ/kg_dry_air]
+  rh       Relative humidity [-] (0-1)
+  w        Humidity ratio [kg_water/kg_dry_air]
+  p_w      Partial pressure of water vapor [bar]
+  rho_tot  Density of humid air [kg/m3]
+  rho_a    Density of dry air [kg/m3]
+  rho_w    Density of water vapor [kg/m3]
+  T_dp     Dew point temperature [C]
+  T_wb     Wet bulb temperature [C]
+
+Input Parameters (exactly 3 required):
+  T        Temperature [C]
+  p_tot    Total pressure [bar]
+  rh       Relative humidity [-] (0-1)
+  w        Humidity ratio [kg_water/kg_dry_air]
+  p_w      Partial pressure water vapor [bar]
+  h        Enthalpy [kJ/kg_dry_air]
+
+Examples:
+  h = HumidAir(h, T=25, rh=0.5, p_tot=1)
+  w = HumidAir(w, T=30, rh=0.6, p_tot=1)
+  T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
+  T_wb = HumidAir(T_wb, T=30, rh=0.5, p_tot=1)
+  rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
+  rh = HumidAir(rh, T=25, w=0.01, p_tot=1)
 """
 
         help_text += """
@@ -566,14 +597,14 @@ BEISPIELE:
     def open_file(self):
         """Öffnet eine Datei."""
         filetypes = [
-            ("TES Files", "*.tes"),
+            ("HES Files", "*.hes"),
             ("Text Files", "*.txt"),
             ("All Files", "*.*")
         ]
         filepath = _suppress_macos_warning(lambda: filedialog.askopenfilename(
             title="Datei öffnen",
             filetypes=filetypes,
-            defaultextension=".tes"
+            defaultextension=".hes"
         ))
 
         if filepath:
@@ -600,14 +631,14 @@ BEISPIELE:
     def save_file_as(self):
         """Speichert die Datei unter neuem Namen."""
         filetypes = [
-            ("TES Files", "*.tes"),
+            ("HES Files", "*.hes"),
             ("Text Files", "*.txt"),
             ("All Files", "*.*")
         ]
         filepath = _suppress_macos_warning(lambda: filedialog.asksaveasfilename(
             title="Datei speichern",
             filetypes=filetypes,
-            defaultextension=".tes"
+            defaultextension=".hes"
         ))
 
         if filepath:
@@ -630,9 +661,9 @@ BEISPIELE:
         if self.current_file:
             import os
             filename = os.path.basename(self.current_file)
-            self.root.title(f"Equation Solver - {filename}")
+            self.root.title(f"HVAC Equation Solver - {filename}")
         else:
-            self.root.title("Equation Solver")
+            self.root.title("HVAC Equation Solver")
 
     def clear_solution(self):
         """Löscht nur die Solution-Ausgabe."""

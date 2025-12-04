@@ -53,6 +53,14 @@ except ImportError:
     RADIATION_FUNCTIONS = {}
     RADIATION_AVAILABLE = False
 
+# Importiere Feuchte-Luft-Funktionen
+try:
+    from humid_air import HUMID_AIR_FUNCTIONS
+    HUMID_AIR_AVAILABLE = True
+except ImportError:
+    HUMID_AIR_FUNCTIONS = {}
+    HUMID_AIR_AVAILABLE = False
+
 
 def create_equation_function(equations: List[str], variables: List[str],
                              constants: Dict[str, float] = None):
@@ -93,6 +101,10 @@ def create_equation_function(equations: List[str], variables: List[str],
         # Füge Strahlungs-Funktionen hinzu
         if RADIATION_AVAILABLE:
             var_dict.update(RADIATION_FUNCTIONS)
+
+        # Füge Feuchte-Luft-Funktionen hinzu
+        if HUMID_AIR_AVAILABLE:
+            var_dict.update(HUMID_AIR_FUNCTIONS)
 
         # Evaluiere jede Gleichung
         results = []
@@ -334,6 +346,10 @@ def create_equation_function_with_sweep(
         if RADIATION_AVAILABLE:
             var_dict.update(RADIATION_FUNCTIONS)
 
+        # Füge Feuchte-Luft-Funktionen hinzu
+        if HUMID_AIR_AVAILABLE:
+            var_dict.update(HUMID_AIR_FUNCTIONS)
+
         # Evaluiere jede Gleichung
         results = []
         for eq in equations:
@@ -361,6 +377,8 @@ def _get_eval_context():
         context.update(THERMO_FUNCTIONS)
     if RADIATION_AVAILABLE:
         context.update(RADIATION_FUNCTIONS)
+    if HUMID_AIR_AVAILABLE:
+        context.update(HUMID_AIR_FUNCTIONS)
     return context
 
 

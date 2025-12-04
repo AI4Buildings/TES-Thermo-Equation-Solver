@@ -38,7 +38,7 @@ env/
 Thumbs.db
 
 # Project specific
-*.tes
+*.hes
 *.txt
 !README.txt
 

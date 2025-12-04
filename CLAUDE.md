@@ -1,6 +1,6 @@
-# Equation Solver
+# HVAC Equation Solver
 
-EES-ähnlicher Gleichungslöser mit CoolProp-Integration für thermodynamische Stoffdaten.
+EES-ähnlicher Gleichungslöser mit CoolProp-Integration für thermodynamische Stoffdaten und Feuchte-Luft-Berechnungen.
 
 ## Installation
 
@@ -32,6 +32,7 @@ equation_solver/
 ├── parser.py         # EES-Syntax → Python Konvertierung
 ├── solver.py         # Block-Dekomposition + Bracket-Suche Solver
 ├── thermodynamics.py # CoolProp Wrapper mit Einheitenumrechnung
+├── humid_air.py      # CoolProp HumidAirProp Wrapper für feuchte Luft
 ├── radiation.py      # Schwarzkörper-Strahlungsfunktionen (Planck, vektorisiert)
 ```
 
@@ -70,6 +71,42 @@ equation_solver/
 - Funktionen: `enthalpy`, `entropy`, `density`, `volume`, `intenergy`, `quality`, `temperature`, `pressure`, `viscosity`, `conductivity`, `prandtl`, `cp`, `cv`, `soundspeed`
 - Input-Parameter: `T`, `p`, `h`, `s`, `x`, `rho`, `d`, `u`, `v`
 
+### Humid Air (humid_air.py)
+- CoolProp HumidAirProp wrapper for psychrometric calculations
+- Syntax: `HumidAir(property, T=..., rh=..., p_tot=...)`
+- **Output properties** (first argument):
+  - `h` - Specific enthalpy [kJ/kg_dry_air]
+  - `rh` - Relative humidity [-] (0-1)
+  - `w` - Humidity ratio [kg_water/kg_dry_air]
+  - `p_w` - Partial pressure of water vapor [bar]
+  - `rho_tot` - Density of humid air [kg/m³]
+  - `rho_a` - Density of dry air [kg/m³]
+  - `rho_w` - Density of water vapor [kg/m³]
+  - `T_dp` - Dew point temperature [°C]
+  - `T_wb` - Wet bulb temperature [°C]
+- **Input parameters** (exactly 3 required):
+  - `T` - Temperature [°C]
+  - `p_tot` - Total pressure [bar]
+  - `rh` - Relative humidity [-]
+  - `w` - Humidity ratio [kg/kg]
+  - `p_w` - Partial pressure water vapor [bar]
+  - `h` - Enthalpy [kJ/kg]
+- Case-insensitive: `HumidAir` = `humidair`
+
+**Examples:**
+```
+{Calculate enthalpy}
+h = HumidAir(h, T=25, rh=0.5, p_tot=1)
+
+{Dew point temperature}
+T_dp = HumidAir(T_dp, T=30, w=0.012, p_tot=1)
+
+{Different parameter combinations}
+w = HumidAir(w, T=25, rh=0.6, p_tot=1)
+rh = HumidAir(rh, T=25, w=0.01, p_tot=1)
+rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
+```
+
 ### Strahlung (radiation.py)
 - Schwarzkörper-Funktionen basierend auf dem Planck'schen Strahlungsgesetz
 - **Alle Funktionen vektorisiert** (unterstützen numpy-Arrays)
@@ -98,6 +135,19 @@ equation_solver/
 | Spektrale Emission Eb | W/(m²·µm) |
 | Gesamtemission E | W/m² |
 | **Winkel (Trigonometrie)** | **Grad (°)** |
+
+### Humid Air Units
+
+| Property | Unit |
+|----------|------|
+| Enthalpy h | kJ/kg_dry_air |
+| Humidity ratio w | kg_water/kg_dry_air |
+| Relative humidity rh | - (0-1) |
+| Partial pressure p_w | bar |
+| Total pressure p_tot | bar |
+| Densities rho_tot, rho_a, rho_w | kg/m³ |
+| Dew point temperature T_dp | °C |
+| Wet bulb temperature T_wb | °C |
 
 ### Trigonometrische Funktionen
 
@@ -132,7 +182,7 @@ Hyperbolische Funktionen (`sinh`, `cosh`, `tanh`) verwenden Radiant.
 
 ## GUI-Features
 
-- File: New, Open, Save, Save As (.tes, .txt)
+- File: New, Open, Save, Save As (.hes, .txt)
 - View: Schriftgröße 6-36pt (Standard: 16pt)
 - Solve: F5 oder Button, Initial Values Dialog
 - Plot: Diagramme für Parameterstudien (erfordert matplotlib)
@@ -190,4 +240,38 @@ eta_s_i_P = (h_5s-h_4)/(h_5-h_4)
 W_dot_T = m_dot_1*(h_1-h_2)
 Q_dot = m_dot_1*(h_1-h_4)
 eta_th = W_dot_T/Q_dot
+```
+
+## Example: Humid Air - Air Conditioning
+
+```
+{Outdoor air (State 1)}
+T_1 = 35
+rh_1 = 0.6
+p = 1
+
+{Calculate state properties}
+h_1 = HumidAir(h, T=T_1, rh=rh_1, p_tot=p)
+w_1 = HumidAir(w, T=T_1, rh=rh_1, p_tot=p)
+T_dp_1 = HumidAir(T_dp, T=T_1, rh=rh_1, p_tot=p)
+T_wb_1 = HumidAir(T_wb, T=T_1, rh=rh_1, p_tot=p)
+
+{Densities}
+rho_tot_1 = HumidAir(rho_tot, T=T_1, rh=rh_1, p_tot=p)
+rho_a_1 = HumidAir(rho_a, T=T_1, rh=rh_1, p_tot=p)
+rho_w_1 = HumidAir(rho_w, T=T_1, rh=rh_1, p_tot=p)
+
+{Partial pressure}
+p_w_1 = HumidAir(p_w, T=T_1, rh=rh_1, p_tot=p)
+
+{Conditioned air (State 2)}
+T_2 = 22
+rh_2 = 0.5
+h_2 = HumidAir(h, T=T_2, rh=rh_2, p_tot=p)
+w_2 = HumidAir(w, T=T_2, rh=rh_2, p_tot=p)
+
+{Cooling load}
+m_dot_a = 1000/3600           {1000 kg/h dry air}
+Q_dot_cool = m_dot_a*(h_1-h_2)
+m_dot_condensate = m_dot_a*(w_1-w_2)
 ```

@@ -1,5 +1,5 @@
 """
-Strahlungs-Modul für den Equation Solver
+Strahlungs-Modul für den HVAC Equation Solver
 
 Implementiert Schwarzkörper-Strahlungsfunktionen basierend auf dem Planckschen Strahlungsgesetz.
 

@@ -1,5 +1,5 @@
 """
-Thermodynamik-Modul für den Equation Solver
+Thermodynamik-Modul für den HVAC Equation Solver
 
 Verwendet CoolProp für Stoffdatenberechnung mit EES-ähnlicher Syntax.
 
