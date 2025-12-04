@@ -561,8 +561,9 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
     """
     Löst eine Gleichung mit einer einzelnen Unbekannten.
 
-    Verwendet eine robuste Bracket-Suche mit Brent's Methode.
-    Funktioniert auch bei Gleichungen mit Singularitäten.
+    Strategie:
+    1. Schneller Newton-Raphson Versuch (für einfache Gleichungen)
+    2. Falls nötig: Robuste Bracket-Suche mit Brent's Methode
 
     Returns:
         (success, value)
@@ -578,6 +579,56 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
         except Exception:
             return float('inf')
 
+    # === Phase 1: Schneller Newton-Raphson Versuch ===
+    # Für einfache (oft lineare) Gleichungen konvergiert dies in wenigen Iterationen
+    initial_guess = 1.0
+    if manual_initial and unknown in manual_initial:
+        initial_guess = manual_initial[unknown]
+
+    try:
+        x = initial_guess
+        h = 1e-8  # Schrittweite für numerische Ableitung
+
+        for iteration in range(30):  # Max 30 Iterationen
+            fx = func(x)
+
+            # Prüfe ob bereits Lösung gefunden
+            if abs(fx) < 1e-10:
+                return True, x
+
+            # Numerische Ableitung
+            fx_plus = func(x + h)
+            fx_minus = func(x - h)
+            dfx = (fx_plus - fx_minus) / (2 * h)
+
+            # Prüfe ob Ableitung gültig
+            if not np.isfinite(dfx) or abs(dfx) < 1e-15:
+                break  # Newton funktioniert nicht, verwende Bracket-Suche
+
+            # Newton-Schritt
+            x_new = x - fx / dfx
+
+            # Prüfe Konvergenz
+            if abs(x_new - x) < 1e-10 * max(1, abs(x)):
+                # Verifiziere Lösung
+                if abs(func(x_new)) < 1e-8:
+                    return True, x_new
+                break
+
+            # Dämpfung für große Schritte (verhindert Oszillation)
+            if abs(x_new - x) > 100 * max(1, abs(x)):
+                x = x + 0.5 * (x_new - x)  # Halber Schritt
+            else:
+                x = x_new
+
+            # Prüfe ob Wert noch vernünftig
+            if not np.isfinite(x) or abs(x) > 1e15:
+                break
+
+    except Exception:
+        pass  # Newton fehlgeschlagen, verwende Bracket-Suche
+
+    # === Phase 2: Robuste Bracket-Suche (Fallback) ===
     # Erzeuge Testpunkte mit dichter Abdeckung
     test_points = set()
 
