@@ -20,6 +20,7 @@ Syntax:
 
 import CoolProp.CoolProp as CP
 from typing import Dict, Any, Optional
+from scipy.optimize import brentq
 
 
 # Mapping of output properties
@@ -47,6 +48,55 @@ INPUT_MAP = {
     'p_w': ('psi_w', None),                         # Special handling
     'h': ('Hda', lambda x: x * 1000),               # kJ/kg -> J/kg
 }
+
+
+def _resolve_dual_humidity(inputs: dict, humidity_keys: set) -> dict:
+    """
+    Resolves the case when two humidity properties are given.
+
+    CoolProp doesn't support two humidity inputs directly (e.g., w and rh).
+    This function finds the temperature T that satisfies both conditions
+    and returns a valid input set (T, P, and one humidity property).
+
+    Args:
+        inputs: Dict with CoolProp keys and SI values (must contain P and 2 humidity props)
+        humidity_keys: Set of the two humidity keys present
+
+    Returns:
+        Modified inputs dict with T instead of one humidity property
+    """
+    P = inputs['P']
+    humidity_list = list(humidity_keys)
+    key1, key2 = humidity_list[0], humidity_list[1]
+    val1, val2 = inputs[key1], inputs[key2]
+
+    def residual(T_K):
+        """Calculate residual: compute key2 from (T, P, key1) and compare to val2"""
+        try:
+            computed = CP.HAPropsSI(key2, 'T', T_K, 'P', P, key1, val1)
+            return computed - val2
+        except:
+            return float('inf')
+
+    # Find T in range -40°C to 80°C (233.15 K to 353.15 K)
+    try:
+        T_K = brentq(residual, 233.15, 353.15, xtol=1e-10)
+    except ValueError:
+        # Try swapping key1 and key2
+        def residual_swap(T_K):
+            try:
+                computed = CP.HAPropsSI(key1, 'T', T_K, 'P', P, key2, val2)
+                return computed - val1
+            except:
+                return float('inf')
+        try:
+            T_K = brentq(residual_swap, 233.15, 353.15, xtol=1e-10)
+        except ValueError:
+            raise ValueError(f"Could not find consistent temperature for given humidity properties "
+                           f"({key1}={val1}, {key2}={val2})")
+
+    # Return inputs with T and one humidity property (keep key1)
+    return {'T': T_K, 'P': P, key1: val1}
 
 
 def HumidAir(output_prop: str, **kwargs) -> float:
@@ -130,6 +180,15 @@ def HumidAir(output_prop: str, **kwargs) -> float:
     if len(inputs) != 3:
         raise ValueError(f"Exactly 3 state properties required, {len(inputs)} given. "
                         f"Typically: T, p_tot and one humidity property (rh, w, p_w or h)")
+
+    # Check for dual humidity inputs (CoolProp doesn't support these directly)
+    # Humidity properties: W (w), R (rh), psi_w (p_w)
+    humidity_keys = {'W', 'R', 'psi_w'}
+    input_humidity = set(inputs.keys()) & humidity_keys
+
+    if len(input_humidity) == 2 and 'P' in inputs:
+        # Two humidity properties given - need to find T iteratively
+        inputs = _resolve_dual_humidity(inputs, input_humidity)
 
     # Create CoolProp call
     keys = list(inputs.keys())
