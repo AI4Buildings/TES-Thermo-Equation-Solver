@@ -321,12 +321,15 @@ def extract_variables(equation: str) -> Set[str]:
     # aber nicht mit einer Zahl beginnen
     variables = set(re.findall(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\b', temp_eq))
 
-    # Entferne Python-Keywords
+    # Entferne Python-Keywords und mathematische Konstanten
     # NICHT die Funktionsnamen entfernen - sie können als Variablen verwendet werden
     # (z.B. cp = cv + R). Die Funktionsaufrufe wurden bereits oben aus temp_eq entfernt.
+    # Aber pi und e sind Konstanten (keine Funktionen), daher hier filtern.
     python_keywords = {'and', 'or', 'not', 'True', 'False', 'None', 'log', 'log10'}
+    math_constants = {'pi', 'e'}  # Mathematische Konstanten (keine Funktionen)
 
     variables -= python_keywords
+    variables -= math_constants
 
     return variables
 
