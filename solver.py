@@ -398,94 +398,138 @@ def _find_minimal_coupled_core(
     """
     Findet den minimalen gekoppelten Kern eines Gleichungsblocks.
 
-    Der Kern besteht aus Variablen, die in mehreren Gleichungen vorkommen
-    und daher wirklich simultan gelöst werden müssen. Variablen die nur
-    in einer Gleichung als Unbekannte vorkommen, können sequentiell
-    nach dem Kern gelöst werden.
+    Der Kern ist die kleinste Menge von Gleichungen und Variablen die:
+    1. Quadratisch sind (gleich viele Gleichungen wie Variablen)
+    2. Unabhängig lösbar sind (alle externen Abhängigkeiten sind bekannt)
+
+    Verwendet einen Bottom-Up Ansatz: Starte mit kleinen Gruppen und
+    expandiere nur wenn nötig.
 
     Returns:
-        (equations, variables) für den minimalen Kern
+        (equations, variables) für den minimalen unabhängig lösbaren Kern
     """
-    import re
-
-    # Zähle wie oft jede Variable als Unbekannte in Gleichungen vorkommt
-    var_occurrence = {}
+    # Mapping: Gleichung -> ihre Unbekannten
     eq_to_unknowns = {}
-
     for eq in equations:
         unknowns = _get_equation_unknowns(eq, known_vars, variables)
         eq_to_unknowns[eq] = unknowns
+
+    # Mapping: Variable -> Gleichungen in denen sie vorkommt
+    var_to_eqs = {}
+    for eq, unknowns in eq_to_unknowns.items():
         for var in unknowns:
-            var_occurrence[var] = var_occurrence.get(var, 0) + 1
+            if var not in var_to_eqs:
+                var_to_eqs[var] = []
+            var_to_eqs[var].append(eq)
 
-    # Finde Variablen die in mehr als einer Gleichung vorkommen (wirklich gekoppelt)
-    coupled_vars = {var for var, count in var_occurrence.items() if count > 1}
+    def is_independently_solvable(block_eqs: List[str], block_vars: Set[str]) -> bool:
+        """Prüft ob ein Block unabhängig lösbar ist."""
+        if len(block_eqs) != len(block_vars):
+            return False
+        # Alle Variablen in den Gleichungen müssen entweder im Block oder bekannt sein
+        for eq in block_eqs:
+            for var in eq_to_unknowns[eq]:
+                if var not in block_vars and var not in known_vars:
+                    return False
+        return True
 
-    if not coupled_vars:
-        # Keine gekoppelten Variablen - nimm den kleinsten Block
-        # (sollte nicht passieren wenn wir hier sind)
-        return equations, variables
+    def expand_to_closed_block(start_eqs: List[str]) -> Tuple[List[str], Set[str]]:
+        """
+        Expandiert eine Startmenge von Gleichungen zu einem geschlossenen Block.
 
-    # Finde Gleichungen die gekoppelte Variablen enthalten
-    # und prüfe welche Variable sie "definieren" (links allein)
-    core_eqs = []
-    core_vars = set()
+        Ein geschlossener Block hat gleich viele Gleichungen wie Unbekannte
+        (quadratischer Block).
 
-    for eq in equations:
-        unknowns = eq_to_unknowns[eq]
-
-        # Prüfe welche Variable diese Gleichung definiert
-        match = re.match(r'^\(([a-zA-Z_][a-zA-Z0-9_]*)\)\s*-\s*\(', eq)
-        defined_var = match.group(1) if match and match.group(1) in unknowns else None
-
-        # Gleichung gehört zum Kern wenn:
-        # 1. Sie eine gekoppelte Variable definiert, ODER
-        # 2. Sie mehrere gekoppelte Variablen enthält (ohne eine zu definieren)
-        coupled_in_eq = unknowns & coupled_vars
-
-        if defined_var and defined_var in coupled_vars:
-            core_eqs.append(eq)
-            core_vars.add(defined_var)
-        elif len(coupled_in_eq) > 1 and not defined_var:
-            # Gleichung verbindet mehrere gekoppelte Variablen
-            core_eqs.append(eq)
-            core_vars.update(coupled_in_eq)
-
-    # Stelle sicher dass alle gekoppelten Variablen im Kern sind
-    # und wir gleich viele Gleichungen wie Variablen haben
-    if len(core_eqs) == len(core_vars) and core_vars:
-        return core_eqs, core_vars
-
-    # Fallback: Iterativ den kleinsten zusammenhängenden Block finden
-    # Starte mit einer gekoppelten Variable und expandiere minimal
-    if coupled_vars:
-        start_var = min(coupled_vars, key=lambda v: var_occurrence[v])
-        core_vars = {start_var}
-        core_eqs = []
-
-        # Finde alle Gleichungen die diese Variable enthalten
-        for eq in equations:
-            if start_var in eq_to_unknowns[eq]:
-                core_eqs.append(eq)
-                core_vars.update(eq_to_unknowns[eq])
+        Strategie: Bei der Wahl neuer Gleichungen werden solche bevorzugt,
+        die möglichst WENIGE neue Variablen einführen. Dies führt zum
+        minimalen gekoppelten Kern.
+        """
+        block_eqs = list(start_eqs)
+        block_vars = set()
+        for eq in block_eqs:
+            block_vars.update(eq_to_unknowns[eq])
 
         # Iterativ expandieren bis Block quadratisch ist
-        max_iter = len(equations)
+        max_iter = len(equations) * 2
         for _ in range(max_iter):
-            if len(core_eqs) == len(core_vars):
+            # Prüfe ob Block quadratisch ist
+            if len(block_eqs) == len(block_vars):
                 break
 
-            # Füge Gleichungen hinzu für Variablen die noch nicht genug Gleichungen haben
-            for var in list(core_vars):
-                var_eqs = [eq for eq in equations if var in eq_to_unknowns[eq]]
-                for eq in var_eqs:
-                    if eq not in core_eqs:
-                        core_eqs.append(eq)
-                        core_vars.update(eq_to_unknowns[eq])
+            # Mehr Variablen als Gleichungen - füge Gleichungen hinzu
+            if len(block_vars) > len(block_eqs):
+                # Finde die beste Gleichung zum Hinzufügen:
+                # Bevorzuge Gleichungen die KEINE oder WENIGE neue Variablen einführen
+                best_eq = None
+                best_new_vars = float('inf')
+
+                for var in block_vars:
+                    if var in known_vars:
+                        continue
+                    for eq in var_to_eqs.get(var, []):
+                        if eq not in block_eqs:
+                            # Zähle wie viele NEUE Variablen diese Gleichung einführt
+                            eq_vars = eq_to_unknowns[eq]
+                            new_vars = len(eq_vars - block_vars)
+                            if new_vars < best_new_vars:
+                                best_new_vars = new_vars
+                                best_eq = eq
+                                # Wenn 0 neue Variablen, sofort nehmen
+                                if new_vars == 0:
+                                    break
+                    if best_new_vars == 0:
                         break
 
-        if len(core_eqs) == len(core_vars):
-            return core_eqs, core_vars
+                if best_eq is not None:
+                    block_eqs.append(best_eq)
+                    block_vars.update(eq_to_unknowns[best_eq])
+                else:
+                    # Keine weiteren Gleichungen verfügbar
+                    break
+            else:
+                # Mehr Gleichungen als Variablen - sollte nicht passieren
+                break
+
+        return block_eqs, block_vars
+
+    # Strategie: Suche nach dem kleinsten unabhängig lösbaren Block
+    # Sortiere Gleichungen nach Anzahl der Unbekannten (weniger = einfacher)
+    sorted_eqs = sorted(equations, key=lambda eq: len(eq_to_unknowns[eq]))
+
+    best_block = None
+    best_size = float('inf')
+
+    # Versuche verschiedene Startpunkte
+    for start_eq in sorted_eqs:
+        block_eqs, block_vars = expand_to_closed_block([start_eq])
+
+        # Prüfe ob Block quadratisch ist
+        if len(block_eqs) != len(block_vars):
+            continue
+
+        # Prüfe ob Block unabhängig lösbar ist
+        if not is_independently_solvable(block_eqs, block_vars):
+            continue
+
+        # Ist dieser Block kleiner als der beste bisherige?
+        if len(block_vars) < best_size:
+            best_block = (block_eqs, block_vars)
+            best_size = len(block_vars)
+
+            # Wenn wir einen kleinen Block gefunden haben, nutze ihn
+            if best_size <= 3:
+                break
+
+    if best_block:
+        return best_block
+
+    # Fallback: Versuche alle Gleichungen als einen Block
+    all_vars = set()
+    for eq in equations:
+        all_vars.update(eq_to_unknowns[eq])
+
+    if len(equations) == len(all_vars):
+        return equations, all_vars
 
     # Wenn nichts funktioniert, gib den ursprünglichen Block zurück
     return equations, variables
