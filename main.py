@@ -2,56 +2,28 @@
 """
 HVAC Equation Solver - Ein EES-ähnlicher Gleichungslöser
 
-Hauptanwendung mit grafischer Benutzeroberfläche.
+Hauptanwendung mit CustomTkinter GUI.
 """
 
 import os
 import sys
 
-# Unterdrücke macOS-spezifische Warnungen (NSOpenPanel/NSWindow)
+# Unterdrücke macOS-spezifische Warnungen
 if sys.platform == 'darwin':
     os.environ['TK_SILENCE_DEPRECATION'] = '1'
-    # Unterdrücke Cocoa-Warnungen
-    from ctypes import cdll, c_int
-    try:
-        libc = cdll.LoadLibrary('libc.dylib')
-        # Redirect stderr to /dev/null für Cocoa-Warnungen
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        saved_stderr = os.dup(2)
-        os.dup2(devnull, 2)
-        os.close(devnull)
-    except Exception:
-        saved_stderr = None
 
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, font, filedialog
+from tkinter import messagebox, filedialog
 
-# Stelle stderr wieder her nach tkinter-Import
-if sys.platform == 'darwin' and 'saved_stderr' in dir() and saved_stderr is not None:
-    os.dup2(saved_stderr, 2)
-    os.close(saved_stderr)
-
-
-def _suppress_macos_warning(func):
-    """Wrapper um macOS Cocoa-Warnungen bei Dateidialogen zu unterdrücken."""
-    if sys.platform != 'darwin':
-        return func()
-
-    # Unterdrücke stderr während des Dialogs
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    saved = os.dup(2)
-    os.dup2(devnull, 2)
-    os.close(devnull)
-    try:
-        return func()
-    finally:
-        os.dup2(saved, 2)
-        os.close(saved)
-
+import customtkinter as ctk
 
 from parser import parse_equations, validate_system
-from solver import solve_system, solve_parametric, format_solution
+from solver import solve_system, solve_parametric, format_solution, SolveAnalysis
 import numpy as np
+
+# CustomTkinter Einstellungen
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 # Versuche Thermodynamik-Modul zu laden
 try:
@@ -72,96 +44,650 @@ try:
 except ImportError:
     MATPLOTLIB_AVAILABLE = False
 
+# Versuche CoolProp Version zu ermitteln
+try:
+    import CoolProp
+    COOLPROP_VERSION = CoolProp.__version__
+except:
+    COOLPROP_VERSION = None
 
-class EquationSolverApp:
+
+# Farbschema
+COLORS = {
+    "bg_dark": "#1a1a2e",
+    "bg_frame": "#16213e",
+    "bg_input": "#0f0f1a",
+    "accent": "#e94560",
+    "accent_hover": "#ff6b6b",
+    "text": "#eaeaea",
+    "text_dim": "#8892a0",
+    "success": "#4ade80",
+    "error": "#f87171",
+    "warning": "#fbbf24",
+    "info": "#60a5fa",
+    "value": "#fbbf24",
+    "border": "#2d3748",
+}
+
+
+def _suppress_macos_warning(func):
+    """Wrapper um macOS Cocoa-Warnungen bei Dateidialogen zu unterdrücken."""
+    if sys.platform != 'darwin':
+        return func()
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    saved = os.dup(2)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        return func()
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
+
+
+class EquationSolverApp(ctk.CTk):
     """Hauptanwendung für den Gleichungslöser."""
 
-    def __init__(self, root):
-        self.root = root
-        self.root.title("HVAC Equation Solver")
-        self.root.geometry("900x700")
-        self.root.minsize(600, 400)
+    def __init__(self):
+        super().__init__()
+
+        # Fenster-Konfiguration
+        self.title("HVAC Equation Solver")
+        self.geometry("1200x800")
+        self.minsize(800, 600)
+
+        # Setze Hintergrundfarbe
+        self.configure(fg_color=COLORS["bg_dark"])
 
         # Aktueller Dateipfad
         self.current_file = None
 
-        # Schriftgröße (Standard: 16)
-        self.font_size = 16
+        # Schriftgröße (Standard: 14)
+        self.font_size = 14
 
         # Gespeicherte Variablen und manuelle Startwerte
         self.known_variables = set()
         self.manual_initial_values = {}
 
-        # Letzte Lösung (für Plots)
+        # Letzte Lösung (für Plots und Analysis)
         self.last_solution = None
         self.last_sweep_vars = {}
+        self.last_solve_stats = {}
+        self.last_analysis = None
 
-        # Konfiguriere das Hauptfenster
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-
-        # Erstelle Hauptframe
-        self.main_frame = ttk.Frame(root, padding="10")
-        self.main_frame.grid(row=0, column=0, sticky="nsew")
-        self.main_frame.columnconfigure(0, weight=1)
-        self.main_frame.rowconfigure(1, weight=1)
+        # Grid-Konfiguration
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # Erstelle die GUI-Elemente
+        self._create_header()
+        self._create_main_content()
+        self._create_statusbar()
         self._create_menu()
-        self._create_toolbar()
-        self._create_paned_window()
-        self._create_status_bar()
+        self._setup_bindings()
+
+    def _create_header(self):
+        """Erstellt den Header mit Logo, Titel und Buttons."""
+        header = ctk.CTkFrame(self, fg_color=COLORS["bg_frame"], corner_radius=0, height=60)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(1, weight=1)
+
+        # Logo/Icon Frame
+        logo_frame = ctk.CTkFrame(header, fg_color=COLORS["accent"], width=50, height=50, corner_radius=8)
+        logo_frame.grid(row=0, column=0, padx=15, pady=8)
+        logo_frame.grid_propagate(False)
+
+        logo_label = ctk.CTkLabel(logo_frame, text="Σ", font=ctk.CTkFont(size=28, weight="bold"),
+                                   text_color="white")
+        logo_label.place(relx=0.5, rely=0.5, anchor="center")
+
+        # Titel
+        title_frame = ctk.CTkFrame(header, fg_color="transparent")
+        title_frame.grid(row=0, column=1, sticky="w", padx=10)
+
+        title_label = ctk.CTkLabel(title_frame, text="HVAC Equation Solver",
+                                    font=ctk.CTkFont(size=20, weight="bold"),
+                                    text_color=COLORS["text"])
+        title_label.pack(anchor="w")
+
+        subtitle_label = ctk.CTkLabel(title_frame, text="Thermodynamic System Analysis",
+                                       font=ctk.CTkFont(size=12),
+                                       text_color=COLORS["text_dim"])
+        subtitle_label.pack(anchor="w")
+
+        # Buttons Frame
+        buttons_frame = ctk.CTkFrame(header, fg_color="transparent")
+        buttons_frame.grid(row=0, column=2, padx=15, pady=8)
+
+        # Solve Button (prominent)
+        self.solve_btn = ctk.CTkButton(
+            buttons_frame,
+            text="▷ Solve",
+            command=self.solve,
+            width=100,
+            height=36,
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["accent_hover"],
+            font=ctk.CTkFont(size=14, weight="bold")
+        )
+        self.solve_btn.pack(side="left", padx=(0, 5))
+
+        # F5 Badge
+        f5_label = ctk.CTkLabel(buttons_frame, text="F5", font=ctk.CTkFont(size=10),
+                                 text_color=COLORS["text_dim"],
+                                 fg_color=COLORS["bg_dark"], corner_radius=4,
+                                 width=24, height=18)
+        f5_label.pack(side="left", padx=(0, 15))
+
+        # Clear Button
+        self.clear_btn = ctk.CTkButton(
+            buttons_frame,
+            text="⊘ Clear",
+            command=self.clear_all,
+            width=80,
+            height=36,
+            fg_color=COLORS["bg_dark"],
+            hover_color=COLORS["border"],
+            border_width=1,
+            border_color=COLORS["border"],
+            font=ctk.CTkFont(size=13)
+        )
+        self.clear_btn.pack(side="left", padx=(0, 5))
+
+        # Examples Button
+        self.example_btn = ctk.CTkButton(
+            buttons_frame,
+            text="☰ Examples",
+            command=self._insert_example,
+            width=100,
+            height=36,
+            fg_color=COLORS["bg_dark"],
+            hover_color=COLORS["border"],
+            border_width=1,
+            border_color=COLORS["border"],
+            font=ctk.CTkFont(size=13)
+        )
+        self.example_btn.pack(side="left", padx=(0, 5))
+
+        # Settings Button
+        self.settings_btn = ctk.CTkButton(
+            buttons_frame,
+            text="⚙",
+            command=self.show_settings,
+            width=36,
+            height=36,
+            fg_color=COLORS["bg_dark"],
+            hover_color=COLORS["border"],
+            border_width=1,
+            border_color=COLORS["border"],
+            font=ctk.CTkFont(size=18)
+        )
+        self.settings_btn.pack(side="left")
+
+    def _create_main_content(self):
+        """Erstellt den Hauptinhalt mit Equations und Solution Panels."""
+        # Container Frame
+        content = ctk.CTkFrame(self, fg_color="transparent")
+        content.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(0, weight=1)
+
+        # PanedWindow für verschiebbare Trennung (verwende tkinter.ttk)
+        from tkinter import ttk
+
+        # Style für PanedWindow im Dark Mode
+        style = ttk.Style()
+        style.configure("Dark.TPanedwindow", background=COLORS["bg_dark"])
+
+        self.paned = ttk.PanedWindow(content, orient=tk.HORIZONTAL)
+        self.paned.grid(row=0, column=0, sticky="nsew")
+
+        # Linkes Panel: Equations (in eigenem Frame für PanedWindow)
+        eq_container = ctk.CTkFrame(self.paned, fg_color="transparent")
+        self._create_equations_panel(eq_container)
+        self.paned.add(eq_container, weight=2)
+
+        # Rechtes Panel: Solution (in eigenem Frame für PanedWindow)
+        sol_container = ctk.CTkFrame(self.paned, fg_color="transparent")
+        self._create_solution_panel(sol_container)
+        self.paned.add(sol_container, weight=1)
+
+    def _create_equations_panel(self, parent):
+        """Erstellt das Equations Panel."""
+        # Parent konfigurieren für Ausdehnung
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        eq_frame = ctk.CTkFrame(parent, fg_color=COLORS["bg_frame"], corner_radius=10)
+        eq_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 5), pady=0)
+        eq_frame.grid_columnconfigure(0, weight=1)
+        eq_frame.grid_rowconfigure(1, weight=1)
+
+        # Header
+        header = ctk.CTkFrame(eq_frame, fg_color="transparent", height=40)
+        header.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
+
+        # Icon und Titel
+        ctk.CTkLabel(header, text="T", font=ctk.CTkFont(size=16, weight="bold"),
+                      text_color=COLORS["info"]).pack(side="left")
+        ctk.CTkLabel(header, text="  EQUATIONS", font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLORS["text"]).pack(side="left")
+
+        # Syntax-Hinweis
+        syntax_hint = ctk.CTkLabel(
+            header,
+            text='x + y = 10   ·  Kommentare: "..." oder {...}',
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text_dim"]
+        )
+        syntax_hint.pack(side="right")
+
+        # Text Editor
+        self.equations_text = ctk.CTkTextbox(
+            eq_frame,
+            font=ctk.CTkFont(family="Courier", size=self.font_size),
+            fg_color=COLORS["bg_input"],
+            text_color=COLORS["text"],
+            corner_radius=8,
+            border_width=1,
+            border_color=COLORS["border"],
+            wrap="none"
+        )
+        self.equations_text.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+    def _create_solution_panel(self, parent):
+        """Erstellt das Solution Panel mit TabView."""
+        # Parent konfigurieren für Ausdehnung
+        parent.grid_columnconfigure(0, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+
+        sol_frame = ctk.CTkFrame(parent, fg_color=COLORS["bg_frame"], corner_radius=10)
+        sol_frame.grid(row=0, column=0, sticky="nsew", padx=(5, 0), pady=0)
+        sol_frame.grid_columnconfigure(0, weight=1)
+        sol_frame.grid_rowconfigure(1, weight=1)
+
+        # Header
+        header = ctk.CTkFrame(sol_frame, fg_color="transparent", height=40)
+        header.grid(row=0, column=0, sticky="ew", padx=15, pady=(10, 5))
+
+        # Icon und Titel
+        ctk.CTkLabel(header, text="☑", font=ctk.CTkFont(size=16),
+                      text_color=COLORS["success"]).pack(side="left")
+        ctk.CTkLabel(header, text="  SOLUTION", font=ctk.CTkFont(size=13, weight="bold"),
+                      text_color=COLORS["text"]).pack(side="left")
+
+        # TabView für Results und Residuals
+        self.tab_view = ctk.CTkTabview(
+            sol_frame,
+            fg_color=COLORS["bg_input"],
+            segmented_button_fg_color=COLORS["bg_dark"],
+            segmented_button_selected_color=COLORS["accent"],
+            segmented_button_unselected_color=COLORS["bg_frame"],
+            corner_radius=8
+        )
+        self.tab_view.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+
+        # Results Tab
+        self.results_tab = self.tab_view.add("Results")
+        self._create_results_tab()
+
+        # Residuals Tab
+        self.residuals_tab = self.tab_view.add("Residuals")
+        self._create_residuals_tab()
+
+    def _create_results_tab(self):
+        """Erstellt den Inhalt des Results Tabs."""
+        self.results_tab.grid_columnconfigure(0, weight=1)
+        self.results_tab.grid_rowconfigure(2, weight=1)
+
+        # Status Frame
+        self.status_frame = ctk.CTkFrame(self.results_tab, fg_color="transparent", height=50)
+        self.status_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
+
+        # Status Label (SOLUTION FOUND / ERROR)
+        self.result_status_label = ctk.CTkLabel(
+            self.status_frame,
+            text="",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLORS["text_dim"]
+        )
+        self.result_status_label.pack(side="left")
+
+        # Stats Label (15 direct, 1 iterative)
+        self.result_stats_label = ctk.CTkLabel(
+            self.status_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text_dim"]
+        )
+        self.result_stats_label.pack(side="right")
+
+        # Info Frame (Equations: X, Unknowns: Y, Status: OK)
+        self.info_frame = ctk.CTkFrame(self.results_tab, fg_color=COLORS["bg_dark"],
+                                        corner_radius=6, height=35)
+        self.info_frame.grid(row=1, column=0, sticky="ew", padx=5, pady=(0, 10))
+
+        self.info_label = ctk.CTkLabel(
+            self.info_frame,
+            text="",
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text_dim"]
+        )
+        self.info_label.pack(padx=10, pady=8)
+
+        # Scrollable Frame für Variablen-Tabelle
+        self.results_scroll = ctk.CTkScrollableFrame(
+            self.results_tab,
+            fg_color="transparent",
+            corner_radius=0
+        )
+        self.results_scroll.grid(row=2, column=0, sticky="nsew", padx=5)
+        self.results_scroll.grid_columnconfigure(0, weight=1)
+        self.results_scroll.grid_columnconfigure(1, weight=0)
+
+        # Header der Tabelle
+        self.table_header = ctk.CTkFrame(self.results_scroll, fg_color="transparent")
+        self.table_header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+
+        ctk.CTkLabel(self.table_header, text="VARIABLE", font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=COLORS["text_dim"], width=150, anchor="w").pack(side="left", padx=5)
+        ctk.CTkLabel(self.table_header, text="VALUE", font=ctk.CTkFont(size=11, weight="bold"),
+                      text_color=COLORS["text_dim"], anchor="e").pack(side="right", padx=5)
+
+        # Container für Variablen-Zeilen
+        self.var_rows_container = ctk.CTkFrame(self.results_scroll, fg_color="transparent")
+        self.var_rows_container.grid(row=1, column=0, columnspan=2, sticky="nsew")
+
+    def _create_residuals_tab(self):
+        """Erstellt den Inhalt des Residuals Tabs."""
+        self.residuals_tab.grid_columnconfigure(0, weight=1)
+        self.residuals_tab.grid_rowconfigure(0, weight=1)
+
+        # Scrollable Frame für Residuals
+        self.residuals_scroll = ctk.CTkScrollableFrame(
+            self.residuals_tab,
+            fg_color="transparent",
+            corner_radius=0
+        )
+        self.residuals_scroll.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+        self.residuals_scroll.grid_columnconfigure(0, weight=1)
+
+        # Container für Residuals-Sektionen
+        self.residuals_content = ctk.CTkFrame(self.residuals_scroll, fg_color="transparent")
+        self.residuals_content.grid(row=0, column=0, sticky="nsew")
+        self.residuals_content.grid_columnconfigure(0, weight=1)
+
+        # Placeholder Text (wird versteckt wenn Daten vorhanden)
+        self.residuals_placeholder = ctk.CTkLabel(
+            self.residuals_content,
+            text="Run Solve to see residuals.\n\n"
+                 "This tab will show:\n"
+                 "• Constants\n"
+                 "• Direct Evaluations\n"
+                 "• Block decomposition with residuals",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["text_dim"],
+            justify="center"
+        )
+        self.residuals_placeholder.grid(row=0, column=0, pady=50)
+
+        # Sections storage
+        self.residuals_sections = []
+
+    def _create_collapsible_section(self, parent, title: str, count: int, row: int) -> ctk.CTkFrame:
+        """Erstellt eine aufklappbare Sektion für die Residuals."""
+        # Main container
+        section_frame = ctk.CTkFrame(parent, fg_color=COLORS["bg_frame"], corner_radius=6)
+        section_frame.grid(row=row, column=0, sticky="ew", pady=3)
+        section_frame.grid_columnconfigure(0, weight=1)
+
+        # Header Frame (klickbar)
+        header = ctk.CTkFrame(section_frame, fg_color="transparent", height=30)
+        header.grid(row=0, column=0, sticky="ew", padx=5, pady=3)
+        header.grid_columnconfigure(1, weight=1)
+
+        # Expand/Collapse Button
+        expand_var = tk.BooleanVar(value=True)
+        expand_btn = ctk.CTkLabel(
+            header, text="▼", width=20,
+            font=ctk.CTkFont(size=10),
+            text_color=COLORS["text_dim"]
+        )
+        expand_btn.grid(row=0, column=0, padx=(5, 0))
+
+        # Title
+        title_label = ctk.CTkLabel(
+            header, text=f"{title} ({count})",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLORS["text"],
+            anchor="w"
+        )
+        title_label.grid(row=0, column=1, sticky="w", padx=5)
+
+        # Content Frame
+        content_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
+        content_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 5))
+        content_frame.grid_columnconfigure(0, weight=1)
+
+        # Toggle function
+        def toggle():
+            if expand_var.get():
+                content_frame.grid_remove()
+                expand_btn.configure(text="▶")
+                expand_var.set(False)
+            else:
+                content_frame.grid()
+                expand_btn.configure(text="▼")
+                expand_var.set(True)
+
+        # Bind click to toggle
+        expand_btn.bind("<Button-1>", lambda e: toggle())
+        title_label.bind("<Button-1>", lambda e: toggle())
+        header.bind("<Button-1>", lambda e: toggle())
+
+        return content_frame
+
+    def _add_equation_row(self, parent, equation: str, var: str, value: float, residual: float, row: int):
+        """Fügt eine Zeile für eine Gleichung zu den Residuals hinzu."""
+        row_frame = ctk.CTkFrame(parent, fg_color="transparent", height=22)
+        row_frame.grid(row=row, column=0, sticky="ew", pady=1)
+        row_frame.grid_columnconfigure(0, weight=1)
+
+        # Residual color based on magnitude
+        if abs(residual) < 1e-8:
+            res_color = COLORS["success"]
+        elif abs(residual) < 1e-4:
+            res_color = COLORS["warning"]
+        else:
+            res_color = COLORS["error"]
+
+        # Equation (truncated if too long)
+        eq_display = equation if len(equation) < 50 else equation[:47] + "..."
+        eq_label = ctk.CTkLabel(
+            row_frame, text=eq_display,
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text"],
+            anchor="w"
+        )
+        eq_label.grid(row=0, column=0, sticky="w")
+
+        # Residual
+        res_text = f"Res: {residual:.2E}"
+        res_label = ctk.CTkLabel(
+            row_frame, text=res_text,
+            font=ctk.CTkFont(size=10),
+            text_color=res_color,
+            anchor="e"
+        )
+        res_label.grid(row=0, column=1, sticky="e", padx=5)
+
+    def _update_residuals_tab(self, analysis: SolveAnalysis):
+        """Aktualisiert den Residuals Tab mit den Lösungsdaten."""
+        # Placeholder verstecken
+        self.residuals_placeholder.grid_remove()
+
+        # Alte Sektionen löschen
+        for section in self.residuals_sections:
+            section.destroy()
+        self.residuals_sections = []
+
+        # Residuals direkt anzeigen
+        current_row = 0
+
+        # === Constants Section ===
+        if analysis.constants:
+            content = self._create_collapsible_section(
+                self.residuals_content, "Constants", len(analysis.constants), current_row
+            )
+            self.residuals_sections.append(content.master)
+
+            for i, eq_info in enumerate(analysis.constants):
+                self._add_equation_row(
+                    content, eq_info.original, eq_info.variable,
+                    eq_info.value, eq_info.residual, i
+                )
+            current_row += 1
+
+        # === Direct Evaluations Section ===
+        if analysis.direct_evals:
+            content = self._create_collapsible_section(
+                self.residuals_content, "Direct Evaluations", len(analysis.direct_evals), current_row
+            )
+            self.residuals_sections.append(content.master)
+
+            for i, eq_info in enumerate(analysis.direct_evals):
+                self._add_equation_row(
+                    content, eq_info.original, eq_info.variable,
+                    eq_info.value, eq_info.residual, i
+                )
+            current_row += 1
+
+        # === Single Unknowns Section ===
+        if analysis.single_unknowns:
+            content = self._create_collapsible_section(
+                self.residuals_content, "Single Unknown (Iterative)", len(analysis.single_unknowns), current_row
+            )
+            self.residuals_sections.append(content.master)
+
+            for i, eq_info in enumerate(analysis.single_unknowns):
+                self._add_equation_row(
+                    content, eq_info.original, eq_info.variable,
+                    eq_info.value, eq_info.residual, i
+                )
+            current_row += 1
+
+        # === Blocks Section ===
+        for block in analysis.blocks:
+            title = f"Block {block.block_number}"
+            content = self._create_collapsible_section(
+                self.residuals_content, title, len(block.equations), current_row
+            )
+            self.residuals_sections.append(content.master)
+
+            # Block header mit Max-Residuum
+            max_res_frame = ctk.CTkFrame(content, fg_color="transparent")
+            max_res_frame.grid(row=0, column=0, sticky="ew", pady=(0, 3))
+
+            vars_text = ", ".join(block.variables)
+            if len(vars_text) > 40:
+                vars_text = vars_text[:37] + "..."
+
+            ctk.CTkLabel(
+                max_res_frame, text=f"Variables: {vars_text}",
+                font=ctk.CTkFont(size=10),
+                text_color=COLORS["text_dim"]
+            ).pack(side="left")
+
+            max_res_color = COLORS["success"] if block.max_residual < 1e-8 else (
+                COLORS["warning"] if block.max_residual < 1e-4 else COLORS["error"]
+            )
+            ctk.CTkLabel(
+                max_res_frame, text=f"Max Res: {block.max_residual:.2E}",
+                font=ctk.CTkFont(size=10, weight="bold"),
+                text_color=max_res_color
+            ).pack(side="right")
+
+            # Gleichungen im Block
+            for i, (eq, res) in enumerate(zip(block.equations, block.residuals)):
+                self._add_equation_row(content, eq, "", 0, res, i + 1)
+
+            current_row += 1
+
+        # Falls keine Daten vorhanden
+        if current_row == 0:
+            self.residuals_placeholder.grid()
+
+    def _create_statusbar(self):
+        """Erstellt die Statusbar am unteren Rand."""
+        statusbar = ctk.CTkFrame(self, fg_color=COLORS["bg_frame"], corner_radius=0, height=30)
+        statusbar.grid(row=2, column=0, sticky="ew")
+
+        # Linke Seite: Dateiname
+        self.file_label = ctk.CTkLabel(
+            statusbar,
+            text="Unsaved",
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text_dim"]
+        )
+        self.file_label.pack(side="left", padx=15, pady=5)
+
+        # Rechte Seite: Versionsinfo
+        version_text = f"Python {sys.version_info.major}.{sys.version_info.minor}"
+        if COOLPROP_VERSION:
+            version_text = f"CoolProp v{COOLPROP_VERSION}  •  {version_text}"
+
+        version_label = ctk.CTkLabel(
+            statusbar,
+            text=version_text,
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text_dim"]
+        )
+        version_label.pack(side="right", padx=15, pady=5)
+
+        # Mitte: Status
+        self.status_label = ctk.CTkLabel(
+            statusbar,
+            text="Ready",
+            font=ctk.CTkFont(size=11),
+            text_color=COLORS["text"]
+        )
+        self.status_label.pack(pady=5)
 
     def _create_menu(self):
         """Erstellt die Menüleiste."""
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
+        menubar = tk.Menu(self)
+        self.configure(menu=menubar)
 
         # File Menü
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
-
         file_menu.add_command(label="New", command=self.new_file, accelerator="Ctrl+N")
         file_menu.add_command(label="Open...", command=self.open_file, accelerator="Ctrl+O")
         file_menu.add_command(label="Save", command=self.save_file, accelerator="Ctrl+S")
-        file_menu.add_command(label="Save As...", command=self.save_file_as, accelerator="Ctrl+Shift+S")
+        file_menu.add_command(label="Save As...", command=self.save_file_as)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.quit, accelerator="Alt+F4")
+        file_menu.add_command(label="Exit", command=self.quit)
 
         # Edit Menü
         edit_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Edit", menu=edit_menu)
-
-        edit_menu.add_command(label="Undo", command=lambda: self.equations_text.edit_undo(), accelerator="Ctrl+Z")
-        edit_menu.add_command(label="Redo", command=lambda: self.equations_text.edit_redo(), accelerator="Ctrl+Y")
-        edit_menu.add_separator()
         edit_menu.add_command(label="Clear All", command=self.clear_all)
         edit_menu.add_command(label="Insert Example", command=self._insert_example)
 
-        # View Menü (Schriftgröße)
+        # View Menü
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
-
         view_menu.add_command(label="Increase Font Size", command=self.increase_font_size, accelerator="Ctrl++")
         view_menu.add_command(label="Decrease Font Size", command=self.decrease_font_size, accelerator="Ctrl+-")
-        view_menu.add_command(label="Reset Font Size", command=self.reset_font_size)
-        view_menu.add_separator()
-
-        # Schriftgrößen-Untermenü
-        fontsize_menu = tk.Menu(view_menu, tearoff=0)
-        view_menu.add_cascade(label="Font Size", menu=fontsize_menu)
-        for size in [8, 10, 12, 14, 16, 18, 20, 24]:
-            fontsize_menu.add_command(label=f"{size} pt", command=lambda s=size: self.set_font_size(s))
 
         # Solve Menü
         solve_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Solve", menu=solve_menu)
-
         solve_menu.add_command(label="Solve", command=self.solve, accelerator="F5")
         solve_menu.add_separator()
         solve_menu.add_command(label="Initial Values...", command=self.show_initial_values_dialog)
 
-        # Plot Menü (nur wenn matplotlib verfügbar)
+        # Plot Menü
         if MATPLOTLIB_AVAILABLE:
             plot_menu = tk.Menu(menubar, tearoff=0)
             menubar.add_cascade(label="Plot", menu=plot_menu)
@@ -171,457 +697,62 @@ class EquationSolverApp:
         # Help Menü
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
-
         help_menu.add_command(label="Function Reference", command=self.show_function_help)
         if THERMO_AVAILABLE:
             help_menu.add_command(label="Fluid List (CoolProp)", command=self.show_fluid_help)
-            help_menu.add_separator()
-            help_menu.add_command(label="Thermodynamic Example", command=self._insert_thermo_example)
 
-        # Keyboard shortcuts
-        self.root.bind("<Control-n>", lambda e: self.new_file())
-        self.root.bind("<Control-o>", lambda e: self.open_file())
-        self.root.bind("<Control-s>", lambda e: self.save_file())
-        self.root.bind("<Control-S>", lambda e: self.save_file_as())
-        self.root.bind("<Control-plus>", lambda e: self.increase_font_size())
-        self.root.bind("<Control-minus>", lambda e: self.decrease_font_size())
-        self.root.bind("<Control-equal>", lambda e: self.increase_font_size())  # Für Tastaturen ohne separates +
+    def _setup_bindings(self):
+        """Richtet Keyboard-Shortcuts ein."""
+        self.bind("<Control-n>", lambda e: self.new_file())
+        self.bind("<Control-o>", lambda e: self.open_file())
+        self.bind("<Control-s>", lambda e: self.save_file())
+        self.bind("<F5>", lambda e: self.solve())
+        self.bind("<Control-plus>", lambda e: self.increase_font_size())
+        self.bind("<Control-minus>", lambda e: self.decrease_font_size())
+        self.bind("<Control-equal>", lambda e: self.increase_font_size())
 
-    def _create_toolbar(self):
-        """Erstellt die Toolbar mit Buttons."""
-        toolbar = ttk.Frame(self.main_frame)
-        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-
-        # Solve Button
-        self.solve_btn = ttk.Button(
-            toolbar,
-            text="Solve (F5)",
-            command=self.solve,
-            width=15
-        )
-        self.solve_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        # Clear Button
-        self.clear_btn = ttk.Button(
-            toolbar,
-            text="Clear",
-            command=self.clear_all,
-            width=10
-        )
-        self.clear_btn.pack(side=tk.LEFT, padx=(0, 5))
-
-        # Example Button
-        self.example_btn = ttk.Button(
-            toolbar,
-            text="Example",
-            command=self._insert_example,
-            width=10
-        )
-        self.example_btn.pack(side=tk.LEFT)
-
-        # Info Label
-        info_label = ttk.Label(
-            toolbar,
-            text="Syntax: x + y = 10 | Kommentare: \"...\" oder {...}",
-            foreground="gray"
-        )
-        info_label.pack(side=tk.RIGHT)
-
-    def _create_paned_window(self):
-        """Erstellt das geteilte Fenster mit Equations und Solution."""
-        # PanedWindow für horizontale Teilung
-        self.paned = ttk.PanedWindow(self.main_frame, orient=tk.HORIZONTAL)
-        self.paned.grid(row=1, column=0, sticky="nsew")
-
-        # Linker Frame: Equations Window
-        left_frame = ttk.LabelFrame(self.paned, text="Equations", padding="5")
-        self.paned.add(left_frame, weight=2)
-
-        # Equations Text Widget
-        self.eq_font = font.Font(family="Courier", size=self.font_size)
-        self.equations_text = scrolledtext.ScrolledText(
-            left_frame,
-            font=self.eq_font,
-            wrap=tk.NONE,
-            undo=True
-        )
-        self.equations_text.pack(fill=tk.BOTH, expand=True)
-
-        # Horizontale Scrollbar für Equations
-        h_scroll = ttk.Scrollbar(left_frame, orient=tk.HORIZONTAL,
-                                  command=self.equations_text.xview)
-        h_scroll.pack(fill=tk.X)
-        self.equations_text.configure(xscrollcommand=h_scroll.set)
-
-        # Rechter Frame: Solution Window
-        right_frame = ttk.LabelFrame(self.paned, text="Solution", padding="5")
-        self.paned.add(right_frame, weight=1)
-
-        # Solution Text Widget
-        self.solution_text = scrolledtext.ScrolledText(
-            right_frame,
-            font=self.eq_font,
-            wrap=tk.NONE,
-            state=tk.DISABLED
-        )
-        self.solution_text.pack(fill=tk.BOTH, expand=True)
-
-        # Horizontale Scrollbar für Solution
-        h_scroll2 = ttk.Scrollbar(right_frame, orient=tk.HORIZONTAL,
-                                   command=self.solution_text.xview)
-        h_scroll2.pack(fill=tk.X)
-        self.solution_text.configure(xscrollcommand=h_scroll2.set)
-
-        # Tags für farbige Ausgabe
-        self.solution_text.tag_configure("success", foreground="green")
-        self.solution_text.tag_configure("error", foreground="red")
-        self.solution_text.tag_configure("info", foreground="blue")
-
-        # Keyboard shortcuts
-        self.root.bind("<F5>", lambda e: self.solve())
-        self.equations_text.bind("<Control-Return>", lambda e: self.solve())
-
-    def _create_status_bar(self):
-        """Erstellt die Statusleiste."""
-        self.status_var = tk.StringVar(value="Bereit")
-        self.status_bar = ttk.Label(
-            self.main_frame,
-            textvariable=self.status_var,
-            relief=tk.SUNKEN,
-            anchor=tk.W
-        )
-        self.status_bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+    # === Schriftgröße ===
 
     def set_font_size(self, size: int):
         """Setzt die Schriftgröße."""
-        self.font_size = max(6, min(36, size))  # Begrenzen auf 6-36
-        self.eq_font.configure(size=self.font_size)
-        self.status_var.set(f"Schriftgröße: {self.font_size} pt")
+        self.font_size = max(8, min(24, size))
+        self.equations_text.configure(font=ctk.CTkFont(family="Courier", size=self.font_size))
+        self.status_label.configure(text=f"Font size: {self.font_size}pt")
 
     def increase_font_size(self):
-        """Erhöht die Schriftgröße."""
         self.set_font_size(self.font_size + 2)
 
     def decrease_font_size(self):
-        """Verringert die Schriftgröße."""
         self.set_font_size(self.font_size - 2)
 
-    def reset_font_size(self):
-        """Setzt die Schriftgröße auf Standard zurück."""
-        self.set_font_size(12)
-
-    def _insert_example(self):
-        """Fügt ein Beispiel mit Thermodynamik ein."""
-        if THERMO_AVAILABLE:
-            example = '''"HVAC Equation Solver - Beispiel"
-"Einheiten: T[C], p[bar], h[kJ/kg], s[kJ/(kg K)], rho[kg/m3]"
-
-{--- Beispiel 1: Wasser Stoffdaten ---}
-"Sattdampf bei 1 bar"
-p_sat = 1
-x_dampf = 1
-h_dampf = enthalpy(water, p=p_sat, x=x_dampf)
-T_sat = temperature(water, p=p_sat, x=x_dampf)
-rho_dampf = density(water, p=p_sat, x=x_dampf)
-
-"Siedendes Wasser bei 1 bar"
-x_wasser = 0
-h_wasser = enthalpy(water, p=p_sat, x=x_wasser)
-rho_wasser = density(water, p=p_sat, x=x_wasser)
-
-"Verdampfungsenthalpie"
-delta_h_v = h_dampf - h_wasser
-
-{--- Beispiel 2: R134a Kaeltemittel ---}
-"Sattdampf bei 25 C"
-T_R134a = 25
-h_R134a = enthalpy(R134a, T=T_R134a, x=1)
-p_R134a = pressure(R134a, T=T_R134a, x=1)
-rho_R134a = density(R134a, T=T_R134a, x=1)
-
-"Zum Loesen: F5 druecken"
-'''
-        else:
-            example = '''"Beispiel: Nichtlineares Gleichungssystem"
-"Berechnung eines rechtwinkligen Dreiecks"
-
-{Gegebene Werte}
-a = 3
-b = 4
-
-{Pythagorean theorem}
-c^2 = a^2 + b^2
-
-{Winkel berechnen}
-tan(alpha) = a / b
-alpha + beta = 90
-
-"Zum Lösen: F5 drücken oder Solve-Button klicken"
-'''
-        self.equations_text.delete("1.0", tk.END)
-        self.equations_text.insert("1.0", example)
-        self.clear_solution()
-
-    def _insert_thermo_example(self):
-        """Fügt ein Thermodynamik-Beispiel ein."""
-        example = '''"Beispiel: Thermodynamische Stoffdaten"
-"Dampfkraftprozess - einfacher Rankine-Zyklus"
-
-{Einheiten: T in C, p in bar, h in kJ/kg, s in kJ/(kg K)}
-
-{Zustand 1: Kesseleintritt (Speisewasser)}
-p1 = 100
-T1 = 30
-h1 = enthalpy(water, T=T1, p=p1)
-s1 = entropy(water, T=T1, p=p1)
-rho1 = density(water, T=T1, p=p1)
-
-{Zustand 2: Kesselaustritt (Sattdampf)}
-p2 = p1
-x2 = 1
-h2 = enthalpy(water, p=p2, x=x2)
-s2 = entropy(water, p=p2, x=x2)
-T2 = temperature(water, p=p2, x=x2)
-
-{Waermeaufnahme im Kessel}
-q_zu = h2 - h1
-
-"Weitere Funktionen: density, volume, intenergy, quality"
-"Transporteigenschaften: viscosity, conductivity, prandtl, cp, cv"
-'''
-        self.equations_text.delete("1.0", tk.END)
-        self.equations_text.insert("1.0", example)
-        self.clear_solution()
-
-    def show_function_help(self):
-        """Zeigt Hilfe zu verfügbaren Funktionen."""
-        help_window = tk.Toplevel(self.root)
-        help_window.title("Function Reference")
-        help_window.geometry("650x700")
-
-        text = scrolledtext.ScrolledText(help_window, font=("Courier", 10))
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        help_text = """=== HVAC EQUATION SOLVER - FUNCTION REFERENCE ===
-
-MATHEMATISCHE FUNKTIONEN:
--------------------------
-sin(x), cos(x), tan(x)     Trigonometrische Funktionen (x in Grad)
-asin(x), acos(x), atan(x)  Inverse trig. Funktionen
-sinh(x), cosh(x), tanh(x)  Hyperbolische Funktionen
-exp(x)                      e^x
-ln(x)                       Natürlicher Logarithmus
-log10(x)                    Logarithmus zur Basis 10
-sqrt(x)                     Quadratwurzel
-abs(x)                      Absolutwert
-pi                          Kreiszahl (3.14159...)
-
-OPERATOREN:
------------
-+, -, *, /                  Grundrechenarten
-^                           Potenz (z.B. x^2)
-( )                         Klammerung
-
-KOMMENTARE:
------------
-"Text"                      Kommentar in Anführungszeichen
-{Text}                      Kommentar in geschweiften Klammern
-
-"""
-        if THERMO_AVAILABLE:
-            help_text += """
-THERMODYNAMISCHE FUNKTIONEN (CoolProp):
----------------------------------------
-Syntax: funktion(stoff, param1=wert1, param2=wert2)
-
-Eigenschaften:
-  enthalpy(...)      Spez. Enthalpie [kJ/kg]
-  entropy(...)       Spez. Entropie [kJ/(kg K)]
-  density(...)       Dichte [kg/m3]
-  volume(...)        Spez. Volumen [m3/kg]
-  intenergy(...)     Spez. innere Energie [kJ/kg]
-  quality(...)       Dampfgehalt [-] (0=Fluessigkeit, 1=Dampf)
-  temperature(...)   Temperatur [C]
-  pressure(...)      Druck [bar]
-  cp(...)            Waermekapazitaet cp [kJ/(kg K)]
-  cv(...)            Waermekapazitaet cv [kJ/(kg K)]
-
-Transporteigenschaften:
-  viscosity(...)     Dynamische Viskositaet [Pa s]
-  conductivity(...)  Waermeleitfaehigkeit [W/(m K)]
-  prandtl(...)       Prandtl-Zahl [-]
-  soundspeed(...)    Schallgeschwindigkeit [m/s]
-
-Zustandsgroessen (2 erforderlich):
-  T = Temperatur [C]
-  p = Druck [bar]
-  h = Enthalpie [kJ/kg]
-  s = Entropie [kJ/(kg K)]
-  x = Dampfgehalt [-]
-  rho, d = Dichte [kg/m3]
-  u = Innere Energie [kJ/kg]
-
-Beispiele:
-  h = enthalpy(water, T=100, p=1)
-  rho = density(R134a, T=25, x=1)
-  T = temperature(water, p=10, h=2700)
-
-HUMID AIR FUNCTIONS (CoolProp HumidAirProp):
---------------------------------------------
-Syntax: HumidAir(property, T=..., rh=..., p_tot=...)
-
-Output Properties (first argument):
-  T        Dry bulb temperature [C]
-  h        Specific enthalpy [kJ/kg_dry_air]
-  rh       Relative humidity [-] (0-1)
-  w        Humidity ratio [kg_water/kg_dry_air]
-  p_w      Partial pressure of water vapor [bar]
-  rho_tot  Density of humid air [kg/m3]
-  rho_a    Density of dry air [kg/m3]
-  rho_w    Density of water vapor [kg/m3]
-  T_dp     Dew point temperature [C]
-  T_wb     Wet bulb temperature [C]
-
-Input Parameters (exactly 3 required):
-  T        Temperature [C]
-  p_tot    Total pressure [bar]
-  rh       Relative humidity [-] (0-1)
-  w        Humidity ratio [kg_water/kg_dry_air]
-  p_w      Partial pressure water vapor [bar]
-  h        Enthalpy [kJ/kg_dry_air]
-
-Examples:
-  h = HumidAir(h, T=25, rh=0.5, p_tot=1)
-  w = HumidAir(w, T=30, rh=0.6, p_tot=1)
-  T = HumidAir(T, h=50, rh=0.5, p_tot=1)
-  T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
-  T_wb = HumidAir(T_wb, T=30, rh=0.5, p_tot=1)
-  rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
-  rh = HumidAir(rh, T=25, w=0.01, p_tot=1)
-"""
-
-        help_text += """
-SCHWARZKOERPER-STRAHLUNG (Planck):
-----------------------------------
-Eb(T, lambda)              Spektrale Emissionsleistung [W/(m2 um)]
-                           T: Temperatur [C], lambda: Wellenlaenge [um]
-
-Blackbody(T, l1, l2)       Anteil der Strahlung im Bereich [l1, l2]
-                           Dimensionslos (0-1)
-
-Wien(T)                    Wellenlaenge max. Emission [um]
-                           (Wiensches Verschiebungsgesetz)
-
-Stefan_Boltzmann(T)        Gesamte Emissionsleistung [W/m2]
-                           (Stefan-Boltzmann-Gesetz: E = sigma*T^4)
-
-Beispiele:
-  E_b = Eb(1000, 2.5)                   "bei 1000 C und 2.5 um"
-  f = Blackbody(5500, 0.4, 0.7)         "sichtbarer Anteil Sonne"
-  lambda_max = Wien(1000)               "Wellenlaenge bei max. Emission"
-  E_total = Stefan_Boltzmann(500)       "Gesamtemission bei 500 C"
-"""
-
-        text.insert("1.0", help_text)
-        text.configure(state=tk.DISABLED)
-
-    def show_fluid_help(self):
-        """Zeigt Liste der verfügbaren Fluide."""
-        if not THERMO_AVAILABLE:
-            messagebox.showinfo("Info", "CoolProp nicht verfügbar")
-            return
-
-        help_window = tk.Toplevel(self.root)
-        help_window.title("Available Fluids (CoolProp)")
-        help_window.geometry("500x600")
-
-        text = scrolledtext.ScrolledText(help_window, font=("Courier", 10))
-        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        help_text = """=== VERFUEGBARE FLUIDE ===
-
-WASSER / DAMPF:
-  Water, water, steam, h2o, wasser
-
-LUFT:
-  Air, air, luft
-
-KAELTEMITTEL (HFCs):
-  R134a, R32, R410A, R407C, R404A, R507A
-
-KAELTEMITTEL (HFOs):
-  R1234yf, R1234ze(E)
-
-NATUERLICHE KAELTEMITTEL:
-  R717 / Ammonia (ammonia, nh3)
-  R744 / CO2 (co2)
-  R290 / Propane (propane, propan)
-  R600a / IsoButane (isobutane, isobutan)
-
-GASE:
-  Nitrogen (n2, stickstoff)
-  Oxygen (o2, sauerstoff)
-  Hydrogen (h2, wasserstoff)
-  Helium (he)
-  Argon (ar)
-  Methane (ch4, methan)
-  Ethane (c2h6, ethan)
-
-HINWEIS:
-  Die Kurzbezeichnungen (in Klammern) koennen
-  alternativ verwendet werden.
-  Gross-/Kleinschreibung wird ignoriert.
-
-BEISPIELE:
-  h = enthalpy(water, T=100, p=1)
-  h = enthalpy(Water, T=100, p=1)
-  h = enthalpy(R134a, T=25, x=1)
-  h = enthalpy(ammonia, T=0, x=0)
-"""
-
-        text.insert("1.0", help_text)
-        text.configure(state=tk.DISABLED)
-
-    def clear_all(self):
-        """Löscht alle Eingaben und Ausgaben."""
-        self.equations_text.delete("1.0", tk.END)
-        self.clear_solution()
-        self.status_var.set("Bereit")
+    # === Datei-Operationen ===
 
     def new_file(self):
         """Erstellt eine neue leere Datei."""
-        self.equations_text.delete("1.0", tk.END)
-        self.clear_solution()
+        self.equations_text.delete("1.0", "end")
+        self.clear_results()
         self.current_file = None
-        self._update_title()
-        self.status_var.set("Neue Datei")
+        self._update_file_label()
+        self.status_label.configure(text="New file")
 
     def open_file(self):
         """Öffnet eine Datei."""
-        filetypes = [
-            ("HES Files", "*.hes"),
-            ("Text Files", "*.txt"),
-            ("All Files", "*.*")
-        ]
+        filetypes = [("HES Files", "*.hes"), ("Text Files", "*.txt"), ("All Files", "*.*")]
         filepath = _suppress_macos_warning(lambda: filedialog.askopenfilename(
-            title="Datei öffnen",
-            filetypes=filetypes,
-            defaultextension=".hes"
+            title="Open File", filetypes=filetypes, defaultextension=".hes"
         ))
-
         if filepath:
             try:
                 with open(filepath, 'r', encoding='utf-8') as f:
                     content = f.read()
-
-                self.equations_text.delete("1.0", tk.END)
+                self.equations_text.delete("1.0", "end")
                 self.equations_text.insert("1.0", content)
-                self.clear_solution()
+                self.clear_results()
                 self.current_file = filepath
-                self._update_title()
-                self.status_var.set(f"Geöffnet: {filepath}")
+                self._update_file_label()
+                self.status_label.configure(text=f"Opened: {os.path.basename(filepath)}")
             except Exception as e:
-                messagebox.showerror("Fehler", f"Datei konnte nicht geöffnet werden:\n{e}")
+                messagebox.showerror("Error", f"Could not open file:\n{e}")
 
     def save_file(self):
         """Speichert die aktuelle Datei."""
@@ -632,550 +763,534 @@ BEISPIELE:
 
     def save_file_as(self):
         """Speichert die Datei unter neuem Namen."""
-        filetypes = [
-            ("HES Files", "*.hes"),
-            ("Text Files", "*.txt"),
-            ("All Files", "*.*")
-        ]
+        filetypes = [("HES Files", "*.hes"), ("Text Files", "*.txt"), ("All Files", "*.*")]
         filepath = _suppress_macos_warning(lambda: filedialog.asksaveasfilename(
-            title="Datei speichern",
-            filetypes=filetypes,
-            defaultextension=".hes"
+            title="Save File", filetypes=filetypes, defaultextension=".hes"
         ))
-
         if filepath:
             self._save_to_file(filepath)
             self.current_file = filepath
-            self._update_title()
+            self._update_file_label()
 
     def _save_to_file(self, filepath: str):
         """Speichert den Inhalt in eine Datei."""
         try:
-            content = self.equations_text.get("1.0", tk.END)
+            content = self.equations_text.get("1.0", "end-1c")
             with open(filepath, 'w', encoding='utf-8') as f:
                 f.write(content)
-            self.status_var.set(f"Gespeichert: {filepath}")
+            self.status_label.configure(text=f"Saved: {os.path.basename(filepath)}")
         except Exception as e:
-            messagebox.showerror("Fehler", f"Datei konnte nicht gespeichert werden:\n{e}")
+            messagebox.showerror("Error", f"Could not save file:\n{e}")
 
-    def _update_title(self):
-        """Aktualisiert den Fenstertitel."""
+    def _update_file_label(self):
+        """Aktualisiert das Datei-Label in der Statusbar."""
         if self.current_file:
-            import os
-            filename = os.path.basename(self.current_file)
-            self.root.title(f"HVAC Equation Solver - {filename}")
+            self.file_label.configure(text=f"✓ Saved: {os.path.basename(self.current_file)}")
         else:
-            self.root.title("HVAC Equation Solver")
+            self.file_label.configure(text="Unsaved")
 
-    def clear_solution(self):
-        """Löscht nur die Solution-Ausgabe."""
-        self.solution_text.configure(state=tk.NORMAL)
-        self.solution_text.delete("1.0", tk.END)
-        self.solution_text.configure(state=tk.DISABLED)
+    # === Lösen ===
 
-    def write_solution(self, text: str, tag: str = None):
-        """Schreibt Text in das Solution-Fenster."""
-        self.solution_text.configure(state=tk.NORMAL)
-        if tag:
-            self.solution_text.insert(tk.END, text, tag)
+    def solve(self):
+        """Löst das Gleichungssystem."""
+        self.clear_results()
+        self.status_label.configure(text="Solving...")
+        self.update()
+
+        equations_text = self.equations_text.get("1.0", "end-1c")
+
+        try:
+            # Parse Gleichungen
+            equations, variables, initial_values, sweep_vars, original_equations = parse_equations(equations_text)
+
+            self.known_variables = variables.copy()
+            self.known_variables.update(sweep_vars.keys())
+
+            self.last_solution = None
+            self.last_sweep_vars = sweep_vars
+            self.last_analysis = None  # Residuals-Daten
+
+            # Validiere System
+            valid, msg = validate_system(equations, variables)
+
+            n_equations = len(equations)
+            n_variables = len(variables)
+
+            # Spezialfall: Keine Gleichungen, aber Konstanten
+            if not valid and n_equations == 0 and initial_values:
+                self._show_results(initial_values, "Constants only", n_equations, n_variables, "OK")
+                self.last_solution = initial_values.copy()
+                self.status_label.configure(text="Constants calculated")
+                return
+
+            if not valid:
+                self._show_error(msg)
+                self.status_label.configure(text="Error: System not solvable")
+                return
+
+            constants = initial_values.copy()
+
+            # Manuelle Startwerte
+            solver_initial = {}
+            for var, val in self.manual_initial_values.items():
+                if var in variables:
+                    solver_initial[var] = val
+
+            # Löse System
+            if sweep_vars:
+                def progress_callback(current, total):
+                    self.status_label.configure(text=f"Solving... {current}/{total}")
+                    self.update()
+
+                success, solution, solve_msg = solve_parametric(
+                    equations, variables, sweep_vars, solver_initial,
+                    progress_callback=progress_callback, constants=constants
+                )
+                # Keine Residuals für Parameterstudien
+                analysis = None
+            else:
+                result = solve_system(
+                    equations, variables, solver_initial, constants=constants,
+                    original_equations=original_equations, return_analysis=True
+                )
+                success, solution, solve_msg, analysis = result
+                self.last_analysis = analysis
+
+            if success:
+                self._show_results(solution, solve_msg, n_equations, n_variables, "OK")
+                self.last_solution = solution
+                if sweep_vars:
+                    self.status_label.configure(text=f"Parametric study: {len(list(sweep_vars.values())[0])} points")
+                else:
+                    self.status_label.configure(text="Solution found")
+                    # Residuals Tab aktualisieren
+                    if analysis:
+                        self._update_residuals_tab(analysis)
+            else:
+                self._show_error(solve_msg)
+                if solution:
+                    self._show_results(solution, "Partial solution", n_equations, n_variables, "FAIL")
+                self.status_label.configure(text="Convergence problem")
+                # Auch bei Fehler Residuals anzeigen
+                if analysis:
+                    self._update_residuals_tab(analysis)
+
+        except Exception as e:
+            self._show_error(str(e))
+            self.status_label.configure(text=f"Error: {e}")
+
+    def clear_results(self):
+        """Löscht die Ergebnisanzeige."""
+        # Status zurücksetzen
+        self.result_status_label.configure(text="", text_color=COLORS["text_dim"])
+        self.result_stats_label.configure(text="")
+        self.info_label.configure(text="")
+
+        # Variablen-Zeilen löschen
+        for widget in self.var_rows_container.winfo_children():
+            widget.destroy()
+
+        # Residuals Tab zurücksetzen
+        for section in self.residuals_sections:
+            section.destroy()
+        self.residuals_sections = []
+        self.residuals_placeholder.grid()
+
+    def _show_results(self, solution: dict, solve_msg: str, n_eq: int, n_var: int, status: str):
+        """Zeigt die Ergebnisse im Results Tab an."""
+        # Status
+        if status == "OK":
+            self.result_status_label.configure(text="● SOLUTION FOUND", text_color=COLORS["success"])
         else:
-            self.solution_text.insert(tk.END, text)
-        self.solution_text.configure(state=tk.DISABLED)
+            self.result_status_label.configure(text="● PARTIAL SOLUTION", text_color=COLORS["warning"])
 
-    def show_initial_values_dialog(self):
-        """Zeigt einen Dialog zum Setzen von manuellen Startwerten."""
-        if not self.known_variables:
-            messagebox.showinfo(
-                "Initial Values",
-                "Bitte zuerst Solve drücken, damit die Variablen erkannt werden."
+        # Stats aus solve_msg extrahieren (falls vorhanden)
+        self.result_stats_label.configure(text=solve_msg if len(solve_msg) < 40 else "")
+
+        # Info-Zeile
+        status_color = COLORS["success"] if status == "OK" else COLORS["error"]
+        self.info_label.configure(
+            text=f"Equations: {n_eq}          Unknowns: {n_var}          Status: {status}"
+        )
+
+        # Variablen-Tabelle
+        row_idx = 0
+        for var in sorted(solution.keys()):
+            val = solution[var]
+
+            # Zeile erstellen
+            row = ctk.CTkFrame(self.var_rows_container, fg_color="transparent", height=28)
+            row.pack(fill="x", pady=1)
+
+            # Variable Name
+            var_label = ctk.CTkLabel(
+                row, text=var,
+                font=ctk.CTkFont(size=12),
+                text_color=COLORS["text"],
+                anchor="w", width=150
             )
-            return
+            var_label.pack(side="left", padx=5)
 
-        # Erstelle Dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Initial Values")
-        dialog.geometry("400x500")
-        dialog.transient(self.root)
+            # Value
+            if isinstance(val, np.ndarray):
+                val_text = f"[{len(val)} values]"
+            elif abs(val) >= 1e6 or (abs(val) < 1e-4 and val != 0):
+                val_text = f"{val:.6e}"
+            else:
+                val_text = f"{val:.6g}"
+
+            val_label = ctk.CTkLabel(
+                row, text=val_text,
+                font=ctk.CTkFont(size=12),
+                text_color=COLORS["value"],
+                anchor="e"
+            )
+            val_label.pack(side="right", padx=5)
+
+            row_idx += 1
+
+    def _show_error(self, message: str):
+        """Zeigt eine Fehlermeldung im Results Tab an."""
+        self.result_status_label.configure(text="● ERROR", text_color=COLORS["error"])
+        self.info_label.configure(text=message[:80] + "..." if len(message) > 80 else message)
+
+    def clear_all(self):
+        """Löscht alle Eingaben und Ausgaben."""
+        self.equations_text.delete("1.0", "end")
+        self.clear_results()
+        self.status_label.configure(text="Ready")
+
+    # === Dialoge ===
+
+    def show_settings(self):
+        """Zeigt den Settings Dialog."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Settings")
+        dialog.geometry("300x200")
+        dialog.transient(self)
         dialog.grab_set()
 
-        # Hauptframe mit Scrollbar
-        main_frame = ttk.Frame(dialog, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+        ctk.CTkLabel(dialog, text="Font Size:", font=ctk.CTkFont(size=13)).pack(pady=10)
 
-        # Info Label
-        info_label = ttk.Label(
-            main_frame,
-            text="Startwerte für Variablen setzen:\n(Leer lassen für automatischen Startwert)",
-            justify=tk.LEFT
-        )
-        info_label.pack(anchor=tk.W, pady=(0, 10))
+        font_slider = ctk.CTkSlider(dialog, from_=8, to=24, number_of_steps=8,
+                                     command=lambda v: self.set_font_size(int(v)))
+        font_slider.set(self.font_size)
+        font_slider.pack(pady=10, padx=20, fill="x")
 
-        # Canvas mit Scrollbar für die Variablenliste
-        canvas_frame = ttk.Frame(main_frame)
-        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        ctk.CTkButton(dialog, text="Close", command=dialog.destroy).pack(pady=20)
 
-        canvas = tk.Canvas(canvas_frame)
-        scrollbar = ttk.Scrollbar(canvas_frame, orient="vertical", command=canvas.yview)
-        scrollable_frame = ttk.Frame(canvas)
+    def show_initial_values_dialog(self):
+        """Zeigt Dialog für manuelle Startwerte."""
+        if not self.known_variables:
+            messagebox.showinfo("Initial Values", "Please run Solve first to detect variables.")
+            return
 
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Initial Values")
+        dialog.geometry("400x500")
+        dialog.transient(self)
+        dialog.grab_set()
 
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
+        # Info
+        ctk.CTkLabel(
+            dialog,
+            text="Set initial values for variables:\n(Leave empty for automatic)",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["text_dim"]
+        ).pack(pady=10)
 
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        # Scrollable Frame für Variablen
+        scroll_frame = ctk.CTkScrollableFrame(dialog, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Eingabefelder für jede Variable
         entries = {}
         for var in sorted(self.known_variables):
-            row_frame = ttk.Frame(scrollable_frame)
-            row_frame.pack(fill=tk.X, pady=2)
+            row = ctk.CTkFrame(scroll_frame, fg_color="transparent")
+            row.pack(fill="x", pady=2)
 
-            label = ttk.Label(row_frame, text=f"{var}:", width=20, anchor=tk.W)
-            label.pack(side=tk.LEFT, padx=(0, 5))
+            ctk.CTkLabel(row, text=f"{var}:", width=120, anchor="w").pack(side="left")
+            entry = ctk.CTkEntry(row, width=100)
+            entry.pack(side="left", padx=5)
 
-            entry = ttk.Entry(row_frame, width=15)
-            entry.pack(side=tk.LEFT)
-
-            # Aktuellen Wert eintragen falls vorhanden
             if var in self.manual_initial_values:
                 entry.insert(0, str(self.manual_initial_values[var]))
 
             entries[var] = entry
 
         # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=10, pady=10)
 
         def apply_values():
-            """Übernimmt die Werte."""
             self.manual_initial_values.clear()
             for var, entry in entries.items():
-                value_str = entry.get().strip()
-                if value_str:
+                val_str = entry.get().strip()
+                if val_str:
                     try:
-                        value = float(value_str)
-                        self.manual_initial_values[var] = value
+                        self.manual_initial_values[var] = float(val_str)
                     except ValueError:
-                        messagebox.showerror(
-                            "Fehler",
-                            f"Ungültiger Wert für {var}: '{value_str}'"
-                        )
+                        messagebox.showerror("Error", f"Invalid value for {var}: '{val_str}'")
                         return
             dialog.destroy()
-            self.status_var.set(f"{len(self.manual_initial_values)} Startwerte gesetzt")
+            self.status_label.configure(text=f"{len(self.manual_initial_values)} initial values set")
 
-        def clear_all_values():
-            """Löscht alle Startwerte."""
-            for entry in entries.values():
-                entry.delete(0, tk.END)
-            self.manual_initial_values.clear()
-
-        ttk.Button(button_frame, text="Clear All", command=clear_all_values).pack(side=tk.LEFT)
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(button_frame, text="OK", command=apply_values).pack(side=tk.RIGHT)
-
-        # Scrollrad-Unterstützung
-        def on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-        canvas.bind_all("<MouseWheel>", on_mousewheel)
-
-        # Cleanup beim Schließen
-        def on_close():
-            canvas.unbind_all("<MouseWheel>")
-            dialog.destroy()
-
-        dialog.protocol("WM_DELETE_WINDOW", on_close)
+        ctk.CTkButton(btn_frame, text="Clear All",
+                       command=lambda: [e.delete(0, "end") for e in entries.values()]).pack(side="left")
+        ctk.CTkButton(btn_frame, text="Cancel", command=dialog.destroy).pack(side="right", padx=5)
+        ctk.CTkButton(btn_frame, text="OK", command=apply_values).pack(side="right")
 
     def show_plot_dialog(self):
-        """Zeigt einen Dialog zum Erstellen eines Plots mit mehreren Y-Variablen."""
+        """Zeigt Plot-Dialog."""
         if not MATPLOTLIB_AVAILABLE:
-            messagebox.showerror("Fehler", "matplotlib nicht verfügbar.\nBitte installieren: pip install matplotlib")
+            messagebox.showerror("Error", "matplotlib not available")
             return
 
         if self.last_solution is None:
-            messagebox.showinfo("Plot", "Bitte zuerst Solve drücken, um Daten zu erhalten.")
+            messagebox.showinfo("Plot", "Please run Solve first.")
             return
 
-        # Prüfe ob es Array-Daten gibt (Parameterstudie)
         has_arrays = any(isinstance(v, np.ndarray) for v in self.last_solution.values())
         if not has_arrays:
-            messagebox.showinfo(
-                "Plot",
-                "Plot erfordert eine Parameterstudie mit Vektordaten.\n\n"
-                "Beispiel:\n  T = 0:10:100\n  h = enthalpy(water, T=T, x=0)"
-            )
+            messagebox.showinfo("Plot", "Plot requires parametric study with vector data.")
             return
 
-        # Finde alle Array-Variablen
         array_vars = sorted([k for k, v in self.last_solution.items() if isinstance(v, np.ndarray)])
 
-        # Erstelle Dialog
-        dialog = tk.Toplevel(self.root)
+        dialog = ctk.CTkToplevel(self)
         dialog.title("New Plot")
-        dialog.geometry("450x580")
-        dialog.minsize(400, 550)
-        dialog.transient(self.root)
+        dialog.geometry("400x400")
+        dialog.transient(self)
         dialog.grab_set()
-
-        main_frame = ttk.Frame(dialog, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
-
-        # X-Achse Auswahl
-        x_frame = ttk.LabelFrame(main_frame, text="X-Achse", padding="5")
-        x_frame.pack(fill=tk.X, pady=(0, 10))
-
-        x_var = tk.StringVar()
-        x_combo = ttk.Combobox(x_frame, textvariable=x_var, values=array_vars, state="readonly", width=30)
-        x_combo.pack(fill=tk.X)
-        if array_vars:
-            x_combo.current(0)
-
-        x_label_var = tk.StringVar()
-        ttk.Label(x_frame, text="Label:").pack(anchor=tk.W, pady=(5, 0))
-        x_label_entry = ttk.Entry(x_frame, textvariable=x_label_var, width=30)
-        x_label_entry.pack(fill=tk.X)
-
-        # Y-Achsen Auswahl (mehrere möglich)
-        y_frame = ttk.LabelFrame(main_frame, text="Y-Achse(n) - Mehrfachauswahl möglich", padding="5")
-        y_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
-        # Listbox mit Scrollbar für Y-Variablen
-        y_list_frame = ttk.Frame(y_frame)
-        y_list_frame.pack(fill=tk.BOTH, expand=True)
-
-        y_scrollbar = ttk.Scrollbar(y_list_frame)
-        y_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        y_listbox = tk.Listbox(y_list_frame, selectmode=tk.MULTIPLE, height=8, yscrollcommand=y_scrollbar.set)
-        y_listbox.pack(fill=tk.BOTH, expand=True)
-        y_scrollbar.config(command=y_listbox.yview)
-
-        for var in array_vars:
-            y_listbox.insert(tk.END, var)
-
-        y_label_var = tk.StringVar()
-        ttk.Label(y_frame, text="Y-Label:").pack(anchor=tk.W, pady=(5, 0))
-        y_label_entry = ttk.Entry(y_frame, textvariable=y_label_var, width=30)
-        y_label_entry.pack(fill=tk.X)
-
-        # Plot-Titel
-        title_frame = ttk.LabelFrame(main_frame, text="Plot-Titel", padding="5")
-        title_frame.pack(fill=tk.X, pady=(0, 10))
-
-        title_var = tk.StringVar()
-        title_entry = ttk.Entry(title_frame, textvariable=title_var, width=40)
-        title_entry.pack(fill=tk.X)
-
-        # Optionen
-        options_frame = ttk.LabelFrame(main_frame, text="Optionen", padding="5")
-        options_frame.pack(fill=tk.X, pady=(0, 10))
-
-        grid_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Gitterlinien anzeigen", variable=grid_var).pack(anchor=tk.W)
-
-        legend_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Legende anzeigen", variable=legend_var).pack(anchor=tk.W)
-
-        markers_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(options_frame, text="Datenpunkte markieren", variable=markers_var).pack(anchor=tk.W)
-
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill=tk.X)
-
-        def create_plot():
-            x_name = x_var.get()
-            y_indices = y_listbox.curselection()
-
-            if not x_name:
-                messagebox.showwarning("Warnung", "Bitte X-Variable auswählen")
-                return
-            if not y_indices:
-                messagebox.showwarning("Warnung", "Bitte mindestens eine Y-Variable auswählen")
-                return
-
-            y_names = [array_vars[i] for i in y_indices]
-            x_data = self.last_solution[x_name]
-            y_data_list = [(name, self.last_solution[name]) for name in y_names]
-
-            self._create_plot_window(
-                x_data, y_data_list,
-                x_label=x_label_var.get() or x_name,
-                y_label=y_label_var.get() or (y_names[0] if len(y_names) == 1 else ""),
-                title=title_var.get(),
-                show_grid=grid_var.get(),
-                show_legend=legend_var.get(),
-                show_markers=markers_var.get()
-            )
-            dialog.destroy()
-
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(button_frame, text="Plot", command=create_plot).pack(side=tk.RIGHT)
-
-    def show_quick_plot_dialog(self):
-        """Zeigt einen vereinfachten Dialog für schnelle X-Y Plots."""
-        if not MATPLOTLIB_AVAILABLE:
-            messagebox.showerror("Fehler", "matplotlib nicht verfügbar.\nBitte installieren: pip install matplotlib")
-            return
-
-        if self.last_solution is None:
-            messagebox.showinfo("Plot", "Bitte zuerst Solve drücken, um Daten zu erhalten.")
-            return
-
-        # Prüfe ob es Array-Daten gibt
-        has_arrays = any(isinstance(v, np.ndarray) for v in self.last_solution.values())
-        if not has_arrays:
-            messagebox.showinfo(
-                "Plot",
-                "Plot erfordert eine Parameterstudie mit Vektordaten.\n\n"
-                "Beispiel:\n  T = 0:10:100\n  h = enthalpy(water, T=T, x=0)"
-            )
-            return
-
-        # Finde alle Array-Variablen
-        array_vars = sorted([k for k, v in self.last_solution.items() if isinstance(v, np.ndarray)])
-
-        # Erstelle einfachen Dialog
-        dialog = tk.Toplevel(self.root)
-        dialog.title("Quick Plot")
-        dialog.geometry("300x150")
-        dialog.transient(self.root)
-        dialog.grab_set()
-
-        main_frame = ttk.Frame(dialog, padding="10")
-        main_frame.pack(fill=tk.BOTH, expand=True)
 
         # X-Achse
-        ttk.Label(main_frame, text="X-Achse:").grid(row=0, column=0, sticky=tk.W, pady=5)
-        x_var = tk.StringVar()
-        x_combo = ttk.Combobox(main_frame, textvariable=x_var, values=array_vars, state="readonly", width=20)
-        x_combo.grid(row=0, column=1, pady=5)
-        if array_vars:
-            x_combo.current(0)
+        ctk.CTkLabel(dialog, text="X-Axis:", font=ctk.CTkFont(size=13)).pack(pady=(20, 5))
+        x_var = ctk.StringVar(value=array_vars[0] if array_vars else "")
+        x_combo = ctk.CTkComboBox(dialog, variable=x_var, values=array_vars, width=200)
+        x_combo.pack()
 
         # Y-Achse
-        ttk.Label(main_frame, text="Y-Achse:").grid(row=1, column=0, sticky=tk.W, pady=5)
-        y_var = tk.StringVar()
-        y_combo = ttk.Combobox(main_frame, textvariable=y_var, values=array_vars, state="readonly", width=20)
-        y_combo.grid(row=1, column=1, pady=5)
-        if len(array_vars) > 1:
-            y_combo.current(1)
-        elif array_vars:
-            y_combo.current(0)
+        ctk.CTkLabel(dialog, text="Y-Axis:", font=ctk.CTkFont(size=13)).pack(pady=(20, 5))
+        y_var = ctk.StringVar(value=array_vars[1] if len(array_vars) > 1 else array_vars[0] if array_vars else "")
+        y_combo = ctk.CTkComboBox(dialog, variable=y_var, values=array_vars, width=200)
+        y_combo.pack()
 
-        # Buttons
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=(20, 0))
+        # Grid Option
+        grid_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(dialog, text="Show grid", variable=grid_var).pack(pady=20)
 
-        def quick_plot():
-            x_name = x_var.get()
-            y_name = y_var.get()
-
+        def create_plot():
+            x_name, y_name = x_var.get(), y_var.get()
             if not x_name or not y_name:
-                messagebox.showwarning("Warnung", "Bitte X und Y Variable auswählen")
                 return
 
             x_data = self.last_solution[x_name]
-            y_data_list = [(y_name, self.last_solution[y_name])]
+            y_data = self.last_solution[y_name]
 
-            self._create_plot_window(
-                x_data, y_data_list,
-                x_label=x_name,
-                y_label=y_name,
-                title=f"{y_name} vs {x_name}",
-                show_grid=True,
-                show_legend=False,
-                show_markers=False
-            )
+            self._create_plot_window(x_data, [(y_name, y_data)], x_name, y_name,
+                                      f"{y_name} vs {x_name}", grid_var.get(), False, False)
             dialog.destroy()
 
-        ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.RIGHT, padx=(5, 0))
-        ttk.Button(button_frame, text="Plot", command=quick_plot).pack(side=tk.RIGHT)
+        ctk.CTkButton(dialog, text="Plot", command=create_plot).pack(pady=20)
+
+    def show_quick_plot_dialog(self):
+        """Vereinfachter Plot-Dialog."""
+        self.show_plot_dialog()
 
     def _create_plot_window(self, x_data, y_data_list, x_label="", y_label="", title="",
                             show_grid=True, show_legend=True, show_markers=False):
-        """Erstellt ein neues Plot-Fenster mit matplotlib."""
+        """Erstellt ein Plot-Fenster."""
         if not MATPLOTLIB_AVAILABLE:
             return
 
-        # Erstelle neues Fenster
-        plot_window = tk.Toplevel(self.root)
+        plot_window = ctk.CTkToplevel(self)
         plot_window.title(f"Plot: {title}" if title else "Plot")
         plot_window.geometry("800x600")
 
-        # Erstelle Figure und Axes
         fig = Figure(figsize=(8, 6), dpi=100)
         ax = fig.add_subplot(111)
 
-        # Farben für mehrere Linien
-        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-                  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
-
-        # Plotte alle Y-Daten
+        colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
         marker = 'o' if show_markers else None
-        for i, (name, y_data) in enumerate(y_data_list):
-            color = colors[i % len(colors)]
-            ax.plot(x_data, y_data, label=name, color=color, marker=marker, markersize=4)
 
-        # Beschriftungen
+        for i, (name, y_data) in enumerate(y_data_list):
+            ax.plot(x_data, y_data, label=name, color=colors[i % len(colors)], marker=marker, markersize=4)
+
         if x_label:
             ax.set_xlabel(x_label)
         if y_label:
             ax.set_ylabel(y_label)
         if title:
             ax.set_title(title)
-
-        # Optionen
         if show_grid:
             ax.grid(True, linestyle='--', alpha=0.7)
         if show_legend and len(y_data_list) > 1:
             ax.legend()
 
-        # Tight layout für bessere Darstellung
         fig.tight_layout()
 
-        # Canvas in Tkinter einbetten
         canvas = FigureCanvasTkAgg(fig, master=plot_window)
         canvas.draw()
 
-        # Toolbar hinzufügen (Zoom, Pan, Save, etc.) - OBEN platzieren
-        toolbar_frame = ttk.Frame(plot_window)
-        toolbar_frame.pack(side=tk.TOP, fill=tk.X)
+        # Toolbar
+        toolbar_frame = ctk.CTkFrame(plot_window, fg_color="transparent")
+        toolbar_frame.pack(side="top", fill="x")
         toolbar = NavigationToolbar2Tk(canvas, toolbar_frame)
         toolbar.update()
 
-        # Canvas NACH der Toolbar packen, damit es den restlichen Platz füllt
-        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        canvas.get_tk_widget().pack(side="top", fill="both", expand=True)
 
-        # Cleanup bei Fenster-Schließung
-        def on_close():
-            plt.close(fig)
-            plot_window.destroy()
+    def show_function_help(self):
+        """Zeigt Funktions-Hilfe."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Function Reference")
+        dialog.geometry("700x600")
 
-        plot_window.protocol("WM_DELETE_WINDOW", on_close)
+        text = ctk.CTkTextbox(dialog, font=ctk.CTkFont(family="Courier", size=11))
+        text.pack(fill="both", expand=True, padx=10, pady=10)
 
-    def solve(self):
-        """Löst das Gleichungssystem."""
-        self.clear_solution()
-        self.status_var.set("Löse...")
-        self.root.update()
+        help_text = """=== HVAC EQUATION SOLVER - FUNCTION REFERENCE ===
 
-        # Hole Gleichungen
-        equations_text = self.equations_text.get("1.0", tk.END)
+MATHEMATICAL FUNCTIONS:
+-----------------------
+sin(x), cos(x), tan(x)     Trigonometric (x in degrees)
+asin(x), acos(x), atan(x)  Inverse trig functions
+sinh(x), cosh(x), tanh(x)  Hyperbolic functions
+exp(x)                      e^x
+ln(x)                       Natural logarithm
+log10(x)                    Base 10 logarithm
+sqrt(x)                     Square root
+abs(x)                      Absolute value
+pi                          Pi constant
 
-        try:
-            # Parse Gleichungen (jetzt mit 4 Rückgabewerten)
-            equations, variables, initial_values, sweep_vars = parse_equations(equations_text)
+THERMODYNAMIC FUNCTIONS (CoolProp):
+-----------------------------------
+Syntax: function(fluid, param1=value1, param2=value2)
 
-            # Speichere gefundene Variablen (inkl. Sweep-Variablen für Initial Values Dialog)
-            self.known_variables = variables.copy()
-            self.known_variables.update(sweep_vars.keys())
+Properties:
+  enthalpy(...)      Specific enthalpy [kJ/kg]
+  entropy(...)       Specific entropy [kJ/(kg K)]
+  density(...)       Density [kg/m3]
+  temperature(...)   Temperature [C]
+  pressure(...)      Pressure [bar]
+  quality(...)       Vapor quality [-]
 
-            # Speichere letzte Lösung für Plots
-            self.last_solution = None
-            self.last_sweep_vars = sweep_vars
+State properties (2 required):
+  T = Temperature [C]
+  p = Pressure [bar]
+  h = Enthalpy [kJ/kg]
+  s = Entropy [kJ/(kg K)]
+  x = Vapor quality [-]
 
-            # Validiere System
-            valid, msg = validate_system(equations, variables)
+Examples:
+  h = enthalpy(water, T=100, p=1)
+  rho = density(R134a, T=25, x=1)
 
-            self.write_solution("=== Systemanalyse ===\n", "info")
-            self.write_solution(f"Gefundene Variablen: {', '.join(sorted(variables))}\n")
-            self.write_solution(f"Anzahl Gleichungen: {len(equations)}\n")
+HUMID AIR FUNCTIONS:
+--------------------
+Syntax: HumidAir(property, T=..., rh=..., p_tot=...)
 
-            # Zeige Sweep-Variablen
-            if sweep_vars:
-                self.write_solution("\nParameterstudie:\n", "info")
-                for name, arr in sweep_vars.items():
-                    self.write_solution(f"  {name}: {arr[0]:.4g} bis {arr[-1]:.4g} ({len(arr)} Werte)\n")
+  h = HumidAir(h, T=25, rh=0.5, p_tot=1)
+  w = HumidAir(w, T=30, rh=0.6, p_tot=1)
+  T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
+"""
+        text.insert("1.0", help_text)
+        text.configure(state="disabled")
 
-            self.write_solution(f"\nStatus: {msg}\n\n")
+    def show_fluid_help(self):
+        """Zeigt Fluid-Liste."""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Available Fluids")
+        dialog.geometry("400x500")
 
-            # Spezialfall: Keine Gleichungen, aber Konstanten berechnet
-            if not valid and len(equations) == 0 and initial_values:
-                self.write_solution("=== Berechnete Konstanten ===\n", "info")
-                for var in sorted(initial_values.keys()):
-                    val = initial_values[var]
-                    if abs(val) >= 1e6 or (abs(val) < 1e-4 and val != 0):
-                        self.write_solution(f"{var} = {val:.6e}\n")
-                    else:
-                        self.write_solution(f"{var} = {val:.6g}\n")
-                self.last_solution = initial_values.copy()
-                self.status_var.set("Konstanten berechnet")
-                return
+        text = ctk.CTkTextbox(dialog, font=ctk.CTkFont(family="Courier", size=11))
+        text.pack(fill="both", expand=True, padx=10, pady=10)
 
-            if not valid:
-                self.write_solution("FEHLER: ", "error")
-                self.write_solution(f"{msg}\n")
-                self.status_var.set("Fehler: System nicht lösbar")
-                return
+        help_text = """=== AVAILABLE FLUIDS ===
 
-            # initial_values vom Parser sind Konstanten (direkte Zuweisungen)
-            # manual_initial_values sind Startwerte für den Solver
-            constants = initial_values.copy()
+WATER / STEAM:
+  Water, water, steam, h2o
 
-            # Manuelle Startwerte nur für unbekannte Variablen
-            solver_initial = {}
-            for var, val in self.manual_initial_values.items():
-                if var in variables:
-                    solver_initial[var] = val
+AIR:
+  Air, air
 
-            # Löse System (mit oder ohne Parameterstudie)
-            if sweep_vars:
-                # Parameterstudie mit Fortschrittsanzeige
-                def progress_callback(current, total):
-                    self.status_var.set(f"Löse... {current}/{total}")
-                    self.root.update()
+REFRIGERANTS (HFCs):
+  R134a, R32, R410A, R407C
 
-                success, solution, solve_msg = solve_parametric(
-                    equations, variables, sweep_vars, solver_initial,
-                    progress_callback=progress_callback, constants=constants
-                )
-            else:
-                # Normale Lösung
-                success, solution, solve_msg = solve_system(
-                    equations, variables, solver_initial, constants=constants
-                )
+REFRIGERANTS (HFOs):
+  R1234yf, R1234ze(E)
 
-            self.write_solution("=== Lösung ===\n", "info")
+NATURAL REFRIGERANTS:
+  R717 / Ammonia (ammonia, nh3)
+  R744 / CO2 (co2)
+  R290 / Propane (propane)
 
-            if success:
-                self.write_solution(f"{solve_msg}\n\n", "success")
-                self.write_solution(format_solution(solution) + "\n")
-                self.last_solution = solution
-                if sweep_vars:
-                    self.status_var.set(f"Parameterstudie: {len(list(sweep_vars.values())[0])} Punkte")
-                else:
-                    self.status_var.set("Lösung gefunden")
-            else:
-                self.write_solution(f"{solve_msg}\n\n", "error")
-                if solution:
-                    self.write_solution("Letzte Näherung:\n")
-                    self.write_solution(format_solution(solution) + "\n")
-                self.status_var.set("Konvergenzproblem")
+GASES:
+  Nitrogen (n2)
+  Oxygen (o2)
+  Hydrogen (h2)
+  Helium (he)
+  Argon (ar)
+  Methane (ch4)
+"""
+        text.insert("1.0", help_text)
+        text.configure(state="disabled")
 
-        except Exception as e:
-            self.write_solution("FEHLER:\n", "error")
-            self.write_solution(str(e) + "\n")
-            self.status_var.set(f"Fehler: {e}")
+    def _insert_example(self):
+        """Fügt ein Beispiel ein."""
+        if THERMO_AVAILABLE:
+            example = '''"HVAC Equation Solver - Example"
+"Units: T[C], p[bar], h[kJ/kg], s[kJ/(kg K)]"
+
+{--- Example 1: Water properties ---}
+"Saturated steam at 1 bar"
+p_sat = 1
+x_steam = 1
+h_steam = enthalpy(water, p=p_sat, x=x_steam)
+T_sat = temperature(water, p=p_sat, x=x_steam)
+rho_steam = density(water, p=p_sat, x=x_steam)
+
+"Saturated liquid at 1 bar"
+x_liquid = 0
+h_liquid = enthalpy(water, p=p_sat, x=x_liquid)
+rho_liquid = density(water, p=p_sat, x=x_liquid)
+
+"Enthalpy of vaporization"
+delta_h_v = h_steam - h_liquid
+
+{--- Example 2: R134a refrigerant ---}
+"Saturated vapor at 25 C"
+T_R134a = 25
+h_R134a = enthalpy(R134a, T=T_R134a, x=1)
+p_R134a = pressure(R134a, T=T_R134a, x=1)
+
+"Press F5 to solve"
+'''
+        else:
+            example = '''"Example: Nonlinear equation system"
+"Right triangle calculation"
+
+{Given values}
+a = 3
+b = 4
+
+{Pythagorean theorem}
+c^2 = a^2 + b^2
+
+{Calculate angles}
+tan(alpha) = a / b
+alpha + beta = 90
+
+"Press F5 to solve"
+'''
+        self.equations_text.delete("1.0", "end")
+        self.equations_text.insert("1.0", example)
+        self.clear_results()
 
 
 def main():
     """Hauptfunktion."""
-    root = tk.Tk()
-
-    # Setze Style
-    style = ttk.Style()
-    if 'clam' in style.theme_names():
-        style.theme_use('clam')
-
-    app = EquationSolverApp(root)
-    root.mainloop()
+    app = EquationSolverApp()
+    app.mainloop()
 
 
 if __name__ == "__main__":

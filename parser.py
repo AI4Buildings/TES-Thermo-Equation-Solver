@@ -6,7 +6,7 @@ Unterstützte Syntax:
 - Zuweisungen: T1 = 300
 - Vektoren: T = 0:10:100 (start:step:end) oder T = 0:100 (start:end, step=1)
 - Operatoren: +, -, *, /, ^ (Potenz)
-- Funktionen: sin, cos, tan, exp, ln, log10, sqrt, abs
+- Funktionen: sin, cos, tan, exp, ln, log10, sqrt, abs, max, min
 - Thermodynamik: enthalpy(water, T=100, p=1), density(R134a, T=25, x=1)
 - Kommentare: "..." oder {...}
 """
@@ -21,7 +21,7 @@ MATH_FUNCTIONS = {
     'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
     'sinh', 'cosh', 'tanh',
     'exp', 'ln', 'log10', 'sqrt', 'abs',
-    'pi'
+    'pi', 'max', 'min'
 }
 
 # Thermodynamik-Funktionen (CoolProp)
@@ -334,7 +334,7 @@ def extract_variables(equation: str) -> Set[str]:
     return variables
 
 
-def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict]:
+def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
     """
     Parst den Eingabetext und extrahiert Gleichungen und Variablen.
 
@@ -343,20 +343,29 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict]:
         variables: Set aller gefundenen Variablen (ohne Sweep-Variable)
         initial_values: Dict mit vorgegebenen Werten (direkte Zuweisungen)
         sweep_vars: Dict mit Vektor-Variablen {name: numpy.array}
+        original_equations: Dict Mapping parsed -> original für Anzeige
     """
+    # Speichere Original-Text vor Kommentar-Entfernung für Mapping
+    original_text = text
+
     # Entferne Kommentare
     text = remove_comments(text)
 
     # Teile in Zeilen auf
     lines = text.split('\n')
+    original_lines = original_text.split('\n')
 
     equations = []
     all_variables = set()
     initial_values = {}
     sweep_vars = {}  # Vektor-Variablen für Parameterstudien
+    original_equations = {}  # Mapping: parsed -> original
 
-    for line in lines:
+    for i, line in enumerate(lines):
         line = line.strip()
+
+        # Hole Original-Zeile (mit Kommentaren, falls vorhanden)
+        original_line = original_lines[i].strip() if i < len(original_lines) else line
 
         # Überspringe leere Zeilen
         if not line:
@@ -437,13 +446,16 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict]:
         equation = f"({left}) - ({right})"
         equations.append(equation)
 
+        # Speichere Original-Zeile für Anzeige
+        original_equations[equation] = original_line
+
     # Entferne Sweep-Variablen aus der Variablenliste (sie sind keine Unbekannten)
     all_variables -= set(sweep_vars.keys())
 
     # Entferne Konstanten aus der Variablenliste (sie sind keine Unbekannten)
     all_variables -= set(initial_values.keys())
 
-    return equations, all_variables, initial_values, sweep_vars
+    return equations, all_variables, initial_values, sweep_vars, original_equations
 
 
 def validate_system(equations: List[str], variables: Set[str]) -> Tuple[bool, str]:
@@ -480,11 +492,12 @@ if __name__ == "__main__":
     {Noch ein Kommentar}
     """
 
-    equations, variables, initial, sweep = parse_equations(test_input)
+    equations, variables, initial, sweep, originals = parse_equations(test_input)
     print("Gleichungen:", equations)
     print("Variablen:", variables)
     print("Initialwerte:", initial)
     print("Sweep-Variablen:", sweep)
+    print("Original-Gleichungen:", originals)
     print(validate_system(equations, variables))
     print()
 
@@ -496,7 +509,7 @@ if __name__ == "__main__":
     h = enthalpy(water, T=T, p=p)
     """
 
-    equations, variables, initial, sweep = parse_equations(test_vector)
+    equations, variables, initial, sweep, originals = parse_equations(test_vector)
     print("Gleichungen:", equations)
     print("Variablen:", variables)
     print("Initialwerte:", initial)

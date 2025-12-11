@@ -8,8 +8,94 @@ Unterstützt Parameterstudien (Sweeps) mit Vektor-Variablen.
 import numpy as np
 from scipy.optimize import fsolve
 from typing import List, Set, Dict, Tuple, Optional, Any, Union
+from dataclasses import dataclass, field
 from numpy import exp, log, log10, sqrt, pi
 from numpy import sinh, cosh, tanh
+
+
+# ============================================================================
+# Analysis Data Structures
+# ============================================================================
+
+@dataclass
+class EquationInfo:
+    """Information über eine einzelne Gleichung."""
+    original: str           # Original-Gleichung (wie eingegeben)
+    parsed: str             # Geparste Gleichung (Python-Syntax)
+    variable: str           # Berechnete Variable
+    value: float            # Berechneter Wert
+    residual: float         # Residuum (sollte ~0 sein)
+    category: str           # "constant", "direct", "single_unknown"
+
+
+@dataclass
+class BlockInfo:
+    """Information über einen gekoppelten Block."""
+    equations: List[str]        # Original-Gleichungen
+    parsed_equations: List[str] # Geparste Gleichungen
+    variables: List[str]        # Variablen im Block
+    values: Dict[str, float]    # Berechnete Werte
+    residuals: List[float]      # Residuen pro Gleichung
+    max_residual: float         # Maximales Residuum
+    block_number: int           # Block-Nummer
+
+
+@dataclass
+class SolveAnalysis:
+    """Vollständige Analyse-Daten einer Lösung."""
+    constants: List[EquationInfo] = field(default_factory=list)
+    direct_evals: List[EquationInfo] = field(default_factory=list)
+    single_unknowns: List[EquationInfo] = field(default_factory=list)
+    blocks: List[BlockInfo] = field(default_factory=list)
+    solve_order: List[str] = field(default_factory=list)  # Reihenfolge der Lösungsschritte
+
+    def add_constant(self, original: str, parsed: str, var: str, value: float):
+        """Fügt eine Konstante hinzu."""
+        self.constants.append(EquationInfo(
+            original=original, parsed=parsed, variable=var,
+            value=value, residual=0.0, category="constant"
+        ))
+        self.solve_order.append(f"const:{var}")
+
+    def add_direct(self, original: str, parsed: str, var: str, value: float, residual: float):
+        """Fügt eine direkte Auswertung hinzu."""
+        self.direct_evals.append(EquationInfo(
+            original=original, parsed=parsed, variable=var,
+            value=value, residual=residual, category="direct"
+        ))
+        self.solve_order.append(f"direct:{var}")
+
+    def add_single_unknown(self, original: str, parsed: str, var: str, value: float, residual: float):
+        """Fügt eine Einzelunbekannte hinzu."""
+        self.single_unknowns.append(EquationInfo(
+            original=original, parsed=parsed, variable=var,
+            value=value, residual=residual, category="single_unknown"
+        ))
+        self.solve_order.append(f"single:{var}")
+
+    def add_block(self, originals: List[str], parsed: List[str], variables: List[str],
+                  values: Dict[str, float], residuals: List[float]):
+        """Fügt einen Block hinzu."""
+        block_num = len(self.blocks) + 1
+        self.blocks.append(BlockInfo(
+            equations=originals, parsed_equations=parsed, variables=variables,
+            values=values, residuals=residuals,
+            max_residual=max(abs(r) for r in residuals) if residuals else 0.0,
+            block_number=block_num
+        ))
+        self.solve_order.append(f"block:{block_num}")
+
+
+@dataclass
+class BlockAnalysis:
+    """Detaillierte Analyse der internen Block-Zerlegung.
+
+    Wenn ein Block > 3 Variablen hat, wird er intern weiter zerlegt.
+    Diese Klasse speichert die Details dieser Zerlegung.
+    """
+    direct_evals: List[EquationInfo] = field(default_factory=list)      # Direkte Auswertungen im Block
+    single_unknowns: List[EquationInfo] = field(default_factory=list)   # Einzelne Unbekannte im Block
+    sub_blocks: List[BlockInfo] = field(default_factory=list)           # Sub-Blöcke (gekoppelte Kerne)
 
 
 # Trigonometrische Funktionen in GRAD (wie EES)
@@ -125,8 +211,10 @@ def solve_system(
     variables: Set[str],
     initial_values: Dict[str, float] = None,
     initial_guess: float = 1.0,
-    constants: Dict[str, float] = None
-) -> Tuple[bool, Dict[str, float], str]:
+    constants: Dict[str, float] = None,
+    original_equations: Dict[str, str] = None,
+    return_analysis: bool = False
+) -> Union[Tuple[bool, Dict[str, float], str], Tuple[bool, Dict[str, float], str, SolveAnalysis]]:
     """
     Löst das Gleichungssystem mit blockweiser Dekomposition.
 
@@ -142,23 +230,34 @@ def solve_system(
         initial_values: Dictionary mit Startwerten für den Solver
         initial_guess: Standardstartwert für unbekannte Variablen
         constants: Dictionary mit festen Werten (direkte Zuweisungen)
+        original_equations: Mapping parsed -> original für Anzeige
+        return_analysis: Wenn True, wird SolveAnalysis als 4. Element zurückgegeben
 
     Returns:
         success: True wenn Lösung gefunden
         solution: Dictionary mit Variablen und ihren Werten
         message: Status- oder Fehlermeldung
+        analysis: (optional) SolveAnalysis mit Debugging-Informationen
     """
     if initial_values is None:
         initial_values = {}
     if constants is None:
         constants = {}
+    if original_equations is None:
+        original_equations = {}
 
     context = _get_eval_context()
+    analysis = SolveAnalysis()
 
     # Phase 1: Starte mit Konstanten
     known_values = constants.copy()
     remaining_equations = list(equations)
     remaining_vars = set(variables)
+
+    # Konstanten zur Analysis hinzufügen
+    for var, value in constants.items():
+        orig = f"{var} = {value}"
+        analysis.add_constant(orig, f"({var}) - ({value})", var, value)
 
     # Sammle Statistiken für Meldung
     stats = {
@@ -193,6 +292,12 @@ def solve_system(
                             remaining_vars.discard(var)
                             remaining_equations.remove(eq)
                             stats['direct'] += 1
+
+                            # Berechne Residuum und füge zur Analysis hinzu
+                            residual = _calculate_residual(eq, known_values, context)
+                            orig = original_equations.get(eq, eq)
+                            analysis.add_direct(orig, eq, var, float(result), residual)
+
                             made_progress = True
                             break
                     except Exception:
@@ -212,6 +317,12 @@ def solve_system(
                         remaining_vars.discard(unknown)
                         remaining_equations.remove(eq)
                         stats['single'] += 1
+
+                        # Berechne Residuum und füge zur Analysis hinzu
+                        residual = _calculate_residual(eq, known_values, context)
+                        orig = original_equations.get(eq, eq)
+                        analysis.add_single_unknown(orig, eq, unknown, value, residual)
+
                         made_progress = True
                         break
 
@@ -226,8 +337,8 @@ def solve_system(
 
                 # Prüfe ob Block quadratisch ist
                 if len(block_eqs) == len(block_vars):
-                    success, block_solution, block_msg = _solve_equation_block(
-                        block_eqs, block_vars, known_values, context, initial_values
+                    success, block_solution, block_msg, block_analysis = _solve_equation_block(
+                        block_eqs, block_vars, known_values, context, initial_values, original_equations
                     )
 
                     if success:
@@ -239,6 +350,37 @@ def solve_system(
                         for eq in block_eqs:
                             if eq in remaining_equations:
                                 remaining_equations.remove(eq)
+
+                        # Füge zur Analysis hinzu - unterscheide ob Block intern zerlegt wurde
+                        if block_analysis is not None:
+                            # Block wurde intern zerlegt - verwende detaillierte Analysis
+                            # Direkte Auswertungen aus dem Block
+                            for eq_info in block_analysis.direct_evals:
+                                analysis.direct_evals.append(eq_info)
+                                analysis.solve_order.append(f"direct:{eq_info.variable}")
+
+                            # Einzelne Unbekannte aus dem Block
+                            for eq_info in block_analysis.single_unknowns:
+                                analysis.single_unknowns.append(eq_info)
+                                analysis.solve_order.append(f"single:{eq_info.variable}")
+
+                            # Sub-Blöcke (der echte gekoppelte Kern)
+                            for sub_block in block_analysis.sub_blocks:
+                                sub_block.block_number = len(analysis.blocks) + 1
+                                analysis.blocks.append(sub_block)
+                                analysis.solve_order.append(f"block:{sub_block.block_number}")
+                        else:
+                            # Block wurde simultan gelöst - als Ganzes zur Analysis
+                            block_residuals = []
+                            for eq in block_eqs:
+                                res = _calculate_residual(eq, known_values, context)
+                                block_residuals.append(res)
+
+                            orig_eqs = [original_equations.get(eq, eq) for eq in block_eqs]
+                            analysis.add_block(
+                                orig_eqs, list(block_eqs), list(block_vars),
+                                block_solution, block_residuals
+                            )
 
                         stats['blocks'].append(len(block_vars))
                         made_progress = True
@@ -264,11 +406,27 @@ def solve_system(
         msg = "Lösung gefunden"
         if parts:
             msg += f" ({', '.join(parts)})"
+
+        if return_analysis:
+            return True, result, msg, analysis
         return True, result, msg
     else:
         # Nicht alle Gleichungen gelöst
         msg = f"Unvollständig: {len(remaining_equations)} Gleichungen, {len(remaining_vars)} Unbekannte verbleibend"
+        if return_analysis:
+            return False, result, msg, analysis
         return False, result, msg
+
+
+def _calculate_residual(equation: str, known_values: Dict[str, float], context: dict) -> float:
+    """Berechnet das Residuum einer Gleichung mit den gegebenen Werten."""
+    try:
+        local_ctx = context.copy()
+        local_ctx.update(known_values)
+        result = eval(equation, {"__builtins__": {}}, local_ctx)
+        return float(result) if np.isfinite(result) else float('inf')
+    except Exception:
+        return float('inf')
 
 
 def format_solution(solution: Dict[str, Any], precision: int = 6) -> str:
@@ -371,7 +529,8 @@ def _get_eval_context():
         'asin': asin, 'acos': acos, 'atan': atan,
         'sinh': sinh, 'cosh': cosh, 'tanh': tanh,
         'exp': exp, 'log': log, 'log10': log10,
-        'sqrt': sqrt, 'abs': np.abs, 'pi': pi
+        'sqrt': sqrt, 'abs': np.abs, 'pi': pi,
+        'max': max, 'min': min
     }
     if THERMO_AVAILABLE:
         context.update(THERMO_FUNCTIONS)
@@ -609,8 +768,9 @@ def _solve_equation_block(
     variables: Set[str],
     known_values: Dict[str, float],
     context: dict,
-    manual_initial: Dict[str, float] = None
-) -> Tuple[bool, Dict[str, float], str]:
+    manual_initial: Dict[str, float] = None,
+    original_equations: Dict[str, str] = None
+) -> Tuple[bool, Dict[str, float], str, Optional[BlockAnalysis]]:
     """
     Löst einen Block von Gleichungen mit gemeinsamen Unbekannten.
 
@@ -619,31 +779,33 @@ def _solve_equation_block(
 
     Args:
         manual_initial: Manuelle Startwerte (haben Priorität)
+        original_equations: Mapping parsed -> original für Anzeige
 
     Returns:
-        (success, solution_dict, message)
+        (success, solution_dict, message, block_analysis)
     """
     if not equations or not variables:
-        return True, {}, "Leerer Block"
+        return True, {}, "Leerer Block", None
 
     n_vars = len(variables)
     n_eqs = len(equations)
 
     if n_eqs != n_vars:
-        return False, {}, f"Block nicht quadratisch: {n_eqs} Gleichungen, {n_vars} Unbekannte"
+        return False, {}, f"Block nicht quadratisch: {n_eqs} Gleichungen, {n_vars} Unbekannte", None
 
     # Bei größeren Blöcken: Versuche iterative Zerlegung
     if n_vars > 3:
-        success, solution, msg = _solve_block_iteratively(
-            equations, variables, known_values, context, manual_initial
+        success, solution, msg, block_analysis = _solve_block_iteratively(
+            equations, variables, known_values, context, manual_initial, original_equations
         )
         if success:
-            return success, solution, msg
+            return success, solution, msg, block_analysis
 
-    # Fallback: Löse den gesamten Block simultan
-    return _solve_block_simultaneously(
+    # Fallback: Löse den gesamten Block simultan (keine interne Zerlegung)
+    success, solution, msg = _solve_block_simultaneously(
         equations, variables, known_values, context, manual_initial
     )
+    return success, solution, msg, None  # Keine BlockAnalysis für simultane Lösung
 
 
 def _solve_block_iteratively(
@@ -651,18 +813,28 @@ def _solve_block_iteratively(
     variables: Set[str],
     known_values: Dict[str, float],
     context: dict,
-    manual_initial: Dict[str, float] = None
-) -> Tuple[bool, Dict[str, float], str]:
+    manual_initial: Dict[str, float] = None,
+    original_equations: Dict[str, str] = None
+) -> Tuple[bool, Dict[str, float], str, Optional[BlockAnalysis]]:
     """
     Versucht einen Block iterativ zu lösen, indem nach jeder gelösten
     Gleichung geprüft wird, ob weitere Gleichungen direkt oder mit
     nur einer Unbekannten lösbar sind.
+
+    Returns:
+        (success, solution_dict, message, block_analysis)
     """
+    if original_equations is None:
+        original_equations = {}
+
     remaining_eqs = list(equations)
     remaining_vars = set(variables)
     local_known = known_values.copy()
     solved_values = {}
     stats = {'direct': 0, 'single': 0, 'subblocks': []}
+
+    # BlockAnalysis für detaillierte Tracking
+    block_analysis = BlockAnalysis()
 
     max_iterations = len(equations) * 2 + 1
     iteration = 0
@@ -690,6 +862,15 @@ def _solve_block_iteratively(
                             remaining_vars.discard(var)
                             remaining_eqs.remove(eq)
                             stats['direct'] += 1
+
+                            # Zur BlockAnalysis hinzufügen
+                            residual = _calculate_residual(eq, local_known, context)
+                            orig = original_equations.get(eq, eq)
+                            block_analysis.direct_evals.append(EquationInfo(
+                                original=orig, parsed=eq, variable=var,
+                                value=float(result), residual=residual, category="direct"
+                            ))
+
                             made_progress = True
                             break
                     except Exception:
@@ -712,6 +893,15 @@ def _solve_block_iteratively(
                     remaining_vars.discard(unknown)
                     remaining_eqs.remove(eq)
                     stats['single'] += 1
+
+                    # Zur BlockAnalysis hinzufügen
+                    residual = _calculate_residual(eq, local_known, context)
+                    orig = original_equations.get(eq, eq)
+                    block_analysis.single_unknowns.append(EquationInfo(
+                        original=orig, parsed=eq, variable=unknown,
+                        value=value, residual=residual, category="single_unknown"
+                    ))
+
                     made_progress = True
                     break
 
@@ -733,9 +923,27 @@ def _solve_block_iteratively(
                     solved_values.update(sub_solution)
                     local_known.update(sub_solution)
                     remaining_vars -= core_vars
+
+                    # Residuen für Sub-Block berechnen
+                    sub_residuals = []
                     for eq in core_eqs:
+                        res = _calculate_residual(eq, local_known, context)
+                        sub_residuals.append(res)
                         if eq in remaining_eqs:
                             remaining_eqs.remove(eq)
+
+                    # Sub-Block zur BlockAnalysis hinzufügen
+                    orig_eqs = [original_equations.get(eq, eq) for eq in core_eqs]
+                    block_analysis.sub_blocks.append(BlockInfo(
+                        equations=orig_eqs,
+                        parsed_equations=list(core_eqs),
+                        variables=list(core_vars),
+                        values=sub_solution,
+                        residuals=sub_residuals,
+                        max_residual=max(abs(r) for r in sub_residuals) if sub_residuals else 0.0,
+                        block_number=len(block_analysis.sub_blocks) + 1
+                    ))
+
                     stats['subblocks'].append(len(core_vars))
                     made_progress = True
 
@@ -750,9 +958,9 @@ def _solve_block_iteratively(
             msg_parts.append(f"{stats['single']} iterativ")
         if stats['subblocks']:
             msg_parts.append(f"Sub-Blöcke: {'+'.join(str(b) for b in stats['subblocks'])}")
-        return True, solved_values, f"Block zerlegt ({', '.join(msg_parts)})"
+        return True, solved_values, f"Block zerlegt ({', '.join(msg_parts)})", block_analysis
 
-    return False, solved_values, f"Iterative Zerlegung unvollständig"
+    return False, solved_values, f"Iterative Zerlegung unvollständig", block_analysis
 
 
 def _solve_block_simultaneously(
