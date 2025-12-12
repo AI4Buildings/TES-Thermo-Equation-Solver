@@ -4,26 +4,26 @@ Equation solver for teaching and rapid calculation of thermodynamic state change
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
-![Version](https://img.shields.io/badge/Version-3.0.0-orange.svg)
+![Version](https://img.shields.io/badge/Version-3.1.0-orange.svg)
 
 ## Features
 
-- **Intuitive Syntax**: Equations in natural form (`h = enthalpy(water, T=100, p=1)`)
+- **Intuitive Syntax**: Equations in natural form (`h = enthalpy(water, T=100°C, p=1bar)`)
 - **Thermodynamic Properties**: Over 100 fluids via CoolProp
-- **Humid Air**: Psychrometric calculations (`h = HumidAir(h, T=25, rh=0.5, p_tot=1)`)
+- **Humid Air**: Psychrometric calculations (`h = HumidAir(h, T=25°C, rh=0.5, p_tot=1bar)`)
+- **Blackbody Radiation**: Planck's radiation functions (`Eb`, `Blackbody`, `Wien`, `Stefan_Boltzmann`)
 - **Robust Solver**: Block decomposition with bracket search and Brent's method
-- **Parameter Studies**: Simple sweep syntax (`p = 25:5:50`)
-- **Blackbody Radiation**: Planck's radiation functions
-- **GUI**: Tkinter-based user interface with plotting capabilities
-- **Unit System** (v3.0): Automatic unit propagation and consistency checking
-- **Dimensional Analysis** (v3.0): Automatic derivation of units for calculated variables
+- **Parameter Studies**: Simple sweep syntax (`p = 25:5:50 bar`)
+- **Unit System**: Automatic unit parsing, propagation and consistency checking
+- **GUI**: Modern CustomTkinter interface with plotting capabilities
+- **Temperature Display**: Configurable display in °C or K (Settings)
 
 ## Installation
 
 ### Required Libraries
 
 ```bash
-pip install numpy scipy CoolProp matplotlib pint
+pip install numpy scipy CoolProp matplotlib pint customtkinter
 ```
 
 | Library | Version | Purpose |
@@ -32,7 +32,8 @@ pip install numpy scipy CoolProp matplotlib pint
 | scipy | >= 1.7 | Numerical solvers (fsolve, brentq) |
 | CoolProp | >= 6.4 | Thermodynamic property data |
 | matplotlib | >= 3.5 | Diagrams and plots (optional) |
-| pint | >= 0.20 | Unit handling and dimensional analysis (optional) |
+| pint | >= 0.20 | Unit handling and dimensional analysis |
+| customtkinter | >= 5.0 | Modern GUI |
 | tkinter | - | GUI (included in Python standard library) |
 
 ### Start the Program
@@ -71,8 +72,8 @@ HVAC-Equation-Solver/
 
 ```
 {Steam at 100°C and 1 bar}
-T = 100
-p = 1
+T = 100 °C
+p = 1 bar
 h = enthalpy(water, T=T, p=p)
 s = entropy(water, T=T, p=p)
 ```
@@ -81,12 +82,26 @@ s = entropy(water, T=T, p=p)
 
 ```
 {Humid air at 25°C and 50% relative humidity}
-T = 25
+T = 25 °C
 rh = 0.5
-p_tot = 1
+p_tot = 1 bar
 h = HumidAir(h, T=T, rh=rh, p_tot=p_tot)
 w = HumidAir(w, T=T, rh=rh, p_tot=p_tot)
 T_dp = HumidAir(T_dp, T=T, rh=rh, p_tot=p_tot)
+```
+
+### Thermal Radiation Example
+
+```
+{Stefan-Boltzmann radiation}
+T_surface = 500 °C
+epsilon = 0.85
+A = 2 m^2
+sigma = 5.67E-8 W/(m^2*K^4)
+Q_rad = epsilon * sigma * A * T_surface^4
+
+{Wien's displacement law}
+lambda_max = Wien(T_surface)
 ```
 
 ### System of Equations
@@ -99,8 +114,8 @@ x - y = 2
 ### Parameter Study
 
 ```
-T = 0:10:100
-p = 1
+T = 0:10:100 °C
+p = 1 bar
 h = enthalpy(water, T=T, p=p)
 ```
 
@@ -108,14 +123,14 @@ h = enthalpy(water, T=T, p=p)
 
 ```
 {Live steam}
-m_dot = 10000/3600
-T_1 = 450
-p_1 = 30
+m_dot = 10000/3600 kg/s
+T_1 = 450 °C
+p_1 = 30 bar
 h_1 = enthalpy(water, p=p_1, T=T_1)
 s_1 = entropy(water, p=p_1, T=T_1)
 
 {Turbine with isentropic efficiency}
-p_2 = 2.5
+p_2 = 2.5 bar
 eta_s = 0.8
 h_2s = enthalpy(water, p=p_2, s=s_1)
 eta_s = (h_2-h_1)/(h_2s-h_1)
@@ -128,21 +143,21 @@ W_dot = m_dot*(h_1-h_2)
 
 ```
 {Outdoor air}
-T_1 = 35
+T_1 = 35 °C
 rh_1 = 0.6
-p = 1
+p = 1 bar
 
 h_1 = HumidAir(h, T=T_1, rh=rh_1, p_tot=p)
 w_1 = HumidAir(w, T=T_1, rh=rh_1, p_tot=p)
 
 {Conditioned air}
-T_2 = 22
+T_2 = 22 °C
 rh_2 = 0.5
 h_2 = HumidAir(h, T=T_2, rh=rh_2, p_tot=p)
 w_2 = HumidAir(w, T=T_2, rh=rh_2, p_tot=p)
 
 {Cooling load}
-m_dot_a = 1000/3600
+m_dot_a = 1000/3600 kg/s
 Q_dot_cool = m_dot_a*(h_1-h_2)
 ```
 
@@ -164,15 +179,17 @@ The solver uses robust block decomposition:
 
 ## Units
 
-| Property | Unit |
-|----------|------|
-| Temperature T | °C |
-| Pressure p | bar |
-| Enthalpy h | kJ/kg |
-| Angles (sin, cos, tan) | Degrees (°) |
-| Entropy s | kJ/(kg·K) |
-| Density rho | kg/m³ |
-| Vapor quality x | - (0-1) |
+**Important:** Temperatures are processed internally in **Kelvin (K)**. Inputs with `°C` are automatically converted.
+
+| Property | Internal Unit | Input Examples |
+|----------|---------------|----------------|
+| Temperature T | K | `25 °C`, `298.15 K` |
+| Pressure p | bar | `1 bar`, `101325 Pa` |
+| Enthalpy h | kJ/kg | `100 kJ/kg` |
+| Angles (sin, cos, tan) | Degrees (°) | |
+| Entropy s | kJ/(kg·K) | |
+| Density rho | kg/m³ | |
+| Vapor quality x | - (0-1) | |
 
 ### Humid Air Units
 
@@ -181,8 +198,8 @@ The solver uses robust block decomposition:
 | Enthalpy h | kJ/kg_dry_air |
 | Humidity ratio w | kg_water/kg_dry_air |
 | Relative humidity rh | - (0-1) |
-| Dew point T_dp | °C |
-| Wet bulb T_wb | °C |
+| Dew point T_dp | K (display: °C selectable) |
+| Wet bulb T_wb | K (display: °C selectable) |
 
 ## Available Functions
 
@@ -199,9 +216,9 @@ Input: `T`, `p_tot`, `rh`, `w`, `p_w`, `h`
 ### Radiation
 `Eb`, `Blackbody`, `Blackbody_cumulative`, `Wien`, `Stefan_Boltzmann`
 
-## Unit System (v3.0)
+## Unit System
 
-The solver now supports automatic unit handling and propagation:
+The solver supports automatic unit handling and propagation:
 
 ### Specifying Units
 
@@ -246,31 +263,11 @@ The solver automatically:
 - Recognizes dimensionless quantities (Nusselt, Grashof, Prandtl numbers)
 - Validates unit consistency in equations
 
-### Example: Natural Convection
+### Settings
 
-```
-{Fluid properties}
-g = 9.81 m/s^2
-k = 0.02772 W/mK
-nu = 18.71e-6 m^2/s
-Pr = 0.721
-L = 1 m
-
-{Temperatures}
-T_s = 90 °C
-T_inf = 20 °C
-
-{Grashof and Nusselt numbers - automatically dimensionless}
-beta = 1/(0.5*(T_s + T_inf))
-Gr = g*beta*L^3*(T_s - T_inf)/nu^2
-Nusselt = 0.59*(Gr*Pr)^0.25
-
-{Heat transfer coefficient - automatically W/m^2K}
-Nusselt = h*L/k
-
-{Heat flux - automatically W/m^2}
-q_dot = h*(T_s - T_inf)
-```
+In the Settings dialog you can configure:
+- **Font Size**: Adjust the editor font size
+- **Temperature Display**: Choose between Kelvin (K) or Celsius (°C) for result display
 
 ## License
 

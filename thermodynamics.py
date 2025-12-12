@@ -80,9 +80,9 @@ INPUT_MAP = {
     'v': 'V_input', # Spez. Volumen (wird zu Dichte konvertiert)
 }
 
-# Umrechnungsfaktoren: EES-Einheit -> SI-Einheit
+# Umrechnungsfaktoren: Interne Einheit -> SI-Einheit (für CoolProp)
 TO_SI = {
-    'T': lambda x: x + 273.15,      # °C -> K
+    'T': lambda x: x,                # K -> K (bereits in K)
     'P': lambda x: x * 1e5,          # bar -> Pa
     'H': lambda x: x * 1000,         # kJ/kg -> J/kg
     'S': lambda x: x * 1000,         # kJ/(kg·K) -> J/(kg·K)
@@ -91,9 +91,9 @@ TO_SI = {
     'D': lambda x: x,                # kg/m³
 }
 
-# Umrechnungsfaktoren: SI-Einheit -> EES-Einheit
+# Umrechnungsfaktoren: SI-Einheit -> Interne Einheit
 FROM_SI = {
-    'T': lambda x: x - 273.15,       # K -> °C
+    'T': lambda x: x,                # K -> K (bleibt in K)
     'P': lambda x: x / 1e5,          # Pa -> bar
     'H': lambda x: x / 1000,         # J/kg -> kJ/kg
     'S': lambda x: x / 1000,         # J/(kg·K) -> kJ/(kg·K)

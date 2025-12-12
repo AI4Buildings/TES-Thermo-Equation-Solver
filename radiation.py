@@ -31,9 +31,14 @@ C2 = 14388.0       # Zweite Strahlungskonstante [µm·K]
 SIGMA = 5.670374419e-8  # Stefan-Boltzmann Konstante [W/(m²·K⁴)]
 
 
-def _celsius_to_kelvin(T_celsius):
-    """Konvertiert Celsius zu Kelvin. Unterstützt Skalare und Arrays."""
-    return np.asarray(T_celsius) + 273.15
+def _ensure_kelvin(T):
+    """
+    Stellt sicher dass T ein numpy Array in Kelvin ist.
+
+    Temperatur wird intern bereits in Kelvin übergeben (seit v3.1).
+    Diese Funktion konvertiert nur zu numpy Array für vektorisierte Berechnung.
+    """
+    return np.asarray(T)
 
 
 def _normalize_wavelength(wavelength):
@@ -69,7 +74,7 @@ def Eb(T, wavelength):
     Eb_λ = C1 / (λ⁵ · (exp(C2/(λ·T)) - 1))
 
     Args:
-        T: Temperatur in °C (Skalar oder Array)
+        T: Temperatur in K (Skalar oder Array)
         wavelength: Wellenlänge in µm oder m (automatische Erkennung)
                    Werte < 0.0001 werden als Meter interpretiert
 
@@ -77,18 +82,17 @@ def Eb(T, wavelength):
         Spektrale Emissionsleistung in W/(m²·µm)
 
     Beispiel:
-        >>> Eb(1000, 3.0)  # Bei 1000°C und 3 µm
+        >>> Eb(1273.15, 3.0)  # Bei 1273.15 K (= 1000°C) und 3 µm
         52889.7...
-        >>> Eb(1000, 3e-6)  # Bei 1000°C und 3e-6 m = 3 µm (gleich!)
+        >>> Eb(1273.15, 3e-6)  # Bei 1273.15 K und 3e-6 m = 3 µm (gleich!)
         52889.7...
     """
-    T = np.asarray(T)
     wavelength = _normalize_wavelength(wavelength)  # Auto-Konvertierung m -> µm
-    T_kelvin = _celsius_to_kelvin(T)
+    T_kelvin = _ensure_kelvin(T)
 
     # Validierung für Skalare
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
-        raise ValueError(f"Temperatur muss > 0 K sein (gegeben: {T}°C = {T_kelvin} K)")
+        raise ValueError(f"Temperatur muss > 0 K sein (gegeben: {T} K)")
     if wavelength.ndim == 0 and wavelength <= 0:
         raise ValueError(f"Wellenlänge muss > 0 sein (gegeben: {wavelength} µm)")
 
@@ -168,7 +172,7 @@ def Blackbody(T, lambda1, lambda2):
     F(λ1→λ2) = ∫[λ1,λ2] Eb_λ dλ / (σ·T⁴)
 
     Args:
-        T: Temperatur in °C (Skalar oder Array)
+        T: Temperatur in K (Skalar oder Array)
         lambda1: Untere Wellenlänge in µm oder m (automatische Erkennung)
         lambda2: Obere Wellenlänge in µm oder m (automatische Erkennung)
 
@@ -176,17 +180,16 @@ def Blackbody(T, lambda1, lambda2):
         Anteil der Strahlung im Bereich (dimensionslos, 0-1)
 
     Beispiel:
-        >>> Blackbody(5500, 0.4, 0.7)  # Sichtbares Licht bei Sonnentemperatur
+        >>> Blackbody(5773.15, 0.4, 0.7)  # Sichtbares Licht bei Sonnentemperatur (5773 K)
         0.367...
     """
-    T = np.asarray(T)
-    T_kelvin = _celsius_to_kelvin(T)
+    T_kelvin = _ensure_kelvin(T)
     lambda1 = float(_normalize_wavelength(lambda1))  # Auto-Konvertierung m -> µm
     lambda2 = float(_normalize_wavelength(lambda2))  # Auto-Konvertierung m -> µm
 
     # Validierung
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
-        raise ValueError(f"Temperatur muss > 0 K sein (gegeben: {T}°C = {T_kelvin} K)")
+        raise ValueError(f"Temperatur muss > 0 K sein (gegeben: {T} K)")
     if lambda1 < 0 or lambda2 <= 0:
         raise ValueError(f"Wellenlängen müssen >= 0 sein")
     if lambda1 >= lambda2:
@@ -228,15 +231,14 @@ def Blackbody_cumulative(T, wavelength):
     F(0→λ) = ∫[0,λ] Eb_λ dλ / (σ·T⁴)
 
     Args:
-        T: Temperatur in °C (Skalar oder Array)
+        T: Temperatur in K (Skalar oder Array)
         wavelength: Obere Wellenlänge in µm oder m (automatische Erkennung)
 
     Returns:
         Kumulativer Anteil der Strahlung (dimensionslos, 0-1)
     """
-    T = np.asarray(T)
     wavelength = _normalize_wavelength(wavelength)  # Auto-Konvertierung m -> µm
-    T_kelvin = _celsius_to_kelvin(T)
+    T_kelvin = _ensure_kelvin(T)
 
     # Validierung für Skalare
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
@@ -268,13 +270,12 @@ def Wien_displacement(T):
     λ_max = 2898 µm·K / T
 
     Args:
-        T: Temperatur in °C (Skalar oder Array)
+        T: Temperatur in K (Skalar oder Array)
 
     Returns:
         Wellenlänge maximaler Emission in µm
     """
-    T = np.asarray(T)
-    T_kelvin = _celsius_to_kelvin(T)
+    T_kelvin = _ensure_kelvin(T)
 
     # Validierung für Skalare
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
@@ -298,13 +299,12 @@ def Stefan_Boltzmann(T):
     E = σ·T⁴
 
     Args:
-        T: Temperatur in °C (Skalar oder Array)
+        T: Temperatur in K (Skalar oder Array)
 
     Returns:
         Gesamte Emissionsleistung in W/m²
     """
-    T = np.asarray(T)
-    T_kelvin = _celsius_to_kelvin(T)
+    T_kelvin = _ensure_kelvin(T)
 
     # Validierung für Skalare
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
@@ -339,38 +339,38 @@ if __name__ == "__main__":
     print("=== Strahlungs-Modul Tests ===\n")
 
     # Test 1: Spektrale Emissionsleistung
-    print("Test 1: Eb bei T=1000°C")
+    print("Test 1: Eb bei T=1273.15 K (= 1000°C)")
     for lam in [1, 2, 3, 5, 10]:
-        eb = Eb(1000, lam)
-        print(f"  Eb(1000°C, {lam} µm) = {eb:.2f} W/(m²·µm)")
+        eb = Eb(1273.15, lam)
+        print(f"  Eb(1273.15 K, {lam} µm) = {eb:.2f} W/(m²·µm)")
     print()
 
     # Test 2: Wien'sche Verschiebung
     print("Test 2: Wien'sche Verschiebung")
-    for T in [0, 100, 500, 1000, 5500]:
+    for T in [273.15, 373.15, 773.15, 1273.15, 5773.15]:
         lam_max = Wien_displacement(T)
-        print(f"  λ_max({T}°C) = {lam_max:.3f} µm")
+        print(f"  λ_max({T} K) = {lam_max:.3f} µm")
     print()
 
     # Test 3: Stefan-Boltzmann
     print("Test 3: Stefan-Boltzmann Gesamtemission")
-    for T in [0, 100, 500, 1000]:
+    for T in [273.15, 373.15, 773.15, 1273.15]:
         E = Stefan_Boltzmann(T)
-        print(f"  E({T}°C) = {E:.2f} W/m²")
+        print(f"  E({T} K) = {E:.2f} W/m²")
     print()
 
     # Test 4: Blackbody-Fraktion (sichtbares Licht bei Sonnentemperatur)
     print("Test 4: Blackbody-Fraktion")
-    T_sun = 5500  # °C (ungefähre Sonnenoberflächentemperatur)
+    T_sun = 5773.15  # K (ungefähre Sonnenoberflächentemperatur, = 5500°C)
     # Sichtbares Licht: 0.38 - 0.75 µm
     f_visible = Blackbody(T_sun, 0.38, 0.75)
-    print(f"  Sichtbarer Anteil bei {T_sun}°C: {f_visible*100:.1f}%")
+    print(f"  Sichtbarer Anteil bei {T_sun} K: {f_visible*100:.1f}%")
 
     # Infrarot: 0.75 - 1000 µm
     f_ir = Blackbody(T_sun, 0.75, 100)
-    print(f"  Infrarot-Anteil bei {T_sun}°C: {f_ir*100:.1f}%")
+    print(f"  Infrarot-Anteil bei {T_sun} K: {f_ir*100:.1f}%")
 
     # UV: 0.01 - 0.38 µm
     f_uv = Blackbody(T_sun, 0.01, 0.38)
-    print(f"  UV-Anteil bei {T_sun}°C: {f_uv*100:.1f}%")
+    print(f"  UV-Anteil bei {T_sun} K: {f_uv*100:.1f}%")
     print(f"  Summe: {(f_visible+f_ir+f_uv)*100:.1f}%")

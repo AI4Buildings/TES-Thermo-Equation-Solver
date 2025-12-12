@@ -131,7 +131,7 @@ class EquationSolverApp(ctk.CTk):
         self.current_unit_values = {}  # Einheiten-Informationen für Variablen
         self.value_labels = {}  # Referenzen auf Value-Labels (für Unit-Änderung)
         self.unit_dropdowns = {}  # Referenzen auf Unit-Dropdowns
-        self.units_enabled = ctk.BooleanVar(value=True)  # Einheiten-Modus aktiviert
+        self.temp_display_unit = ctk.StringVar(value="degC")  # Standard-Anzeigeeinheit für Temperaturen (°C)
 
         # Grid-Konfiguration
         self.grid_columnconfigure(0, weight=1)
@@ -904,12 +904,11 @@ class EquationSolverApp(ctk.CTk):
         equations_text = self.equations_text.get("1.0", "end-1c")
 
         try:
-            # Parse Gleichungen (mit oder ohne Einheiten je nach Checkbox)
-            parse_units = self.units_enabled.get()
-            equations, variables, initial_values, sweep_vars, original_equations, unit_values = parse_equations(equations_text, parse_units=parse_units)
+            # Parse Gleichungen mit Einheiten
+            equations, variables, initial_values, sweep_vars, original_equations, unit_values = parse_equations(equations_text, parse_units=True)
 
             self.known_variables = variables.copy()
-            self.current_unit_values = unit_values if parse_units else {}  # Einheiten nur wenn aktiviert
+            self.current_unit_values = unit_values
             self.known_variables.update(sweep_vars.keys())
 
             self.last_solution = None
@@ -976,7 +975,7 @@ class EquationSolverApp(ctk.CTk):
             # Zwei-Phasen-Ansatz:
             # Phase 1: Direkte Erkennung von CoolProp/HumidAir (keine Propagation)
             # Phase 2: Propagation für Berechnungen (mehrere Durchläufe)
-            if parse_units and UNITS_AVAILABLE and success:
+            if UNITS_AVAILABLE and success:
                 # Phase 1: Nur Thermodynamik-Funktionen (ohne Propagation)
                 for var in solution.keys():
                     if var not in self.current_unit_values:
@@ -1018,8 +1017,9 @@ class EquationSolverApp(ctk.CTk):
                 # Mehrere Durchläufe, da neue Einheiten weitere Ableitungen ermöglichen
                 if CONSTRAINT_PROPAGATION_AVAILABLE:
                     for propagation_pass in range(5):  # Max 5 Durchläufe
-                        known_units = {var: uv.original_unit for var, uv in self.current_unit_values.items()
-                                       if uv.original_unit}
+                        # Verwende calc_unit (interne Einheit, z.B. K) für konsistente Propagation
+                        known_units = {var: uv.calc_unit for var, uv in self.current_unit_values.items()
+                                       if uv.calc_unit}
                         # Füge Konstanten ohne Einheit als dimensionslos hinzu
                         for var in constants:
                             if var not in known_units:
@@ -1049,8 +1049,9 @@ class EquationSolverApp(ctk.CTk):
 
                 # Phase 3: Einheiten-Konsistenzprüfung
                 if CONSTRAINT_PROPAGATION_AVAILABLE and analysis:
-                    known_units = {var: uv.original_unit for var, uv in self.current_unit_values.items()
-                                   if uv.original_unit}
+                    # Verwende calc_unit für konsistente Prüfung
+                    known_units = {var: uv.calc_unit for var, uv in self.current_unit_values.items()
+                                   if uv.calc_unit}
                     # Füge Konstanten ohne Einheit als dimensionslos hinzu
                     for var in constants:
                         if var not in known_units:
@@ -1170,6 +1171,10 @@ class EquationSolverApp(ctk.CTk):
             has_unit = UNITS_AVAILABLE and unit_value and unit_value.original_unit
 
             # Wert für Anzeige bestimmen
+            # Prüfe ob es sich um eine Temperatur handelt
+            temp_units = {'K', 'degC', 'degF', 'kelvin', 'celsius', 'fahrenheit', '°C', '°F'}
+            is_temperature = has_unit and unit_value.original_unit in temp_units
+
             if isinstance(val, np.ndarray):
                 # Für Arrays: Zeige Bereich (min → max) für bessere Übersicht
                 min_val = np.nanmin(val)
@@ -1182,7 +1187,12 @@ class EquationSolverApp(ctk.CTk):
             else:
                 # Bei Einheiten: Original-Wert in Original-Einheit anzeigen
                 if has_unit:
-                    display_val = unit_value.original_value
+                    # Für Temperaturen: Setting-Einheit als Standard verwenden
+                    if is_temperature:
+                        preferred_unit = self.temp_display_unit.get()
+                        display_val = unit_value.to(preferred_unit)
+                    else:
+                        display_val = unit_value.original_value
                 else:
                     display_val = val
 
@@ -1194,6 +1204,12 @@ class EquationSolverApp(ctk.CTk):
             # Unit Dropdown oder Platzhalter (rechts außen, vor Value)
             if has_unit and not isinstance(val, np.ndarray):
                 compatible_units = get_compatible_units(unit_value.original_unit)
+
+                # Für Temperaturen: Setting-Einheit als Standard im Dropdown
+                if is_temperature:
+                    default_unit = self.temp_display_unit.get()
+                else:
+                    default_unit = unit_value.original_unit
 
                 unit_dropdown = ctk.CTkOptionMenu(
                     row,
@@ -1208,10 +1224,10 @@ class EquationSolverApp(ctk.CTk):
                     dropdown_hover_color=COLORS["accent"],
                     command=lambda u, v=var: self._on_unit_changed(v, u)
                 )
-                unit_dropdown.set(unit_value.original_unit)
+                unit_dropdown.set(default_unit)
                 unit_dropdown.pack(side="right", padx=2)
                 self.unit_dropdowns[var] = unit_dropdown
-            elif isinstance(val, np.ndarray) and UNITS_AVAILABLE and self.units_enabled.get():
+            elif isinstance(val, np.ndarray) and UNITS_AVAILABLE:
                 # Für Arrays: Zeige Einheit als Label (wenn bekannt), sonst "array"
                 array_unit_text = unit_value.original_unit if has_unit else "array"
                 unit_label = ctk.CTkLabel(
@@ -1221,7 +1237,7 @@ class EquationSolverApp(ctk.CTk):
                     width=80, anchor="center"
                 )
                 unit_label.pack(side="right", padx=2)
-            elif UNITS_AVAILABLE and self.units_enabled.get() and not isinstance(val, np.ndarray):
+            elif UNITS_AVAILABLE and not isinstance(val, np.ndarray):
                 # Platzhalter für dimensionslose Werte (für Spaltenausrichtung)
                 unit_placeholder = ctk.CTkLabel(
                     row, text="-",
@@ -1298,23 +1314,35 @@ class EquationSolverApp(ctk.CTk):
         separator = ctk.CTkFrame(dialog, height=2, fg_color=COLORS["bg_frame"])
         separator.pack(fill="x", padx=20, pady=15)
 
-        # Units Option
-        ctk.CTkLabel(dialog, text="Unit Handling:", font=ctk.CTkFont(size=13)).pack(pady=(5, 10))
+        # Temperature Display Unit
+        ctk.CTkLabel(dialog, text="Temperature Display:", font=ctk.CTkFont(size=13)).pack(pady=(5, 10))
 
-        units_checkbox = ctk.CTkCheckBox(
-            dialog,
-            text="Enable unit parsing and conversion",
-            variable=self.units_enabled,
+        temp_unit_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        temp_unit_frame.pack(padx=20, anchor="w")
+
+        temp_radio_k = ctk.CTkRadioButton(
+            temp_unit_frame,
+            text="Kelvin (K)",
+            variable=self.temp_display_unit,
+            value="K",
             font=ctk.CTkFont(size=12),
-            fg_color=COLORS["accent"],
-            hover_color=COLORS["accent_hover"],
-            text_color=COLORS["text"]
+            fg_color=COLORS["accent"]
         )
-        units_checkbox.pack(padx=20, anchor="w")
+        temp_radio_k.pack(side="left", padx=(0, 20))
+
+        temp_radio_c = ctk.CTkRadioButton(
+            temp_unit_frame,
+            text="Celsius (°C)",
+            variable=self.temp_display_unit,
+            value="degC",
+            font=ctk.CTkFont(size=12),
+            fg_color=COLORS["accent"]
+        )
+        temp_radio_c.pack(side="left")
 
         ctk.CTkLabel(
             dialog,
-            text="Parse units like °C, bar, kJ/kg from input\nand show unit dropdowns in results",
+            text="Default unit for temperature results\n(can still be changed per variable)",
             font=ctk.CTkFont(size=10),
             text_color=COLORS["text_dim"],
             justify="left"
@@ -1514,32 +1542,35 @@ Properties:
   enthalpy(...)      Specific enthalpy [kJ/kg]
   entropy(...)       Specific entropy [kJ/(kg K)]
   density(...)       Density [kg/m3]
-  temperature(...)   Temperature [C]
+  temperature(...)   Temperature [K]
   pressure(...)      Pressure [bar]
   quality(...)       Vapor quality [-]
 
 State properties (2 required):
-  T = Temperature [C]
+  T = Temperature [K] (internally, use 373.15K or 100°C)
   p = Pressure [bar]
   h = Enthalpy [kJ/kg]
   s = Entropy [kJ/(kg K)]
   x = Vapor quality [-]
 
 Examples:
-  h = enthalpy(water, T=100, p=1)
-  rho = density(R134a, T=25, x=1)
+  h = enthalpy(water, T=373.15K, p=1)    {100°C}
+  h = enthalpy(water, T=100°C, p=1)      {also valid}
+  rho = density(R134a, T=298.15K, x=1)   {25°C}
 
 HUMID AIR FUNCTIONS:
 --------------------
 Syntax: HumidAir(property, T=..., rh=..., p_tot=...)
+Temperature T in [K] (or use °C with unit)
 
-  h = HumidAir(h, T=25, rh=0.5, p_tot=1)
-  w = HumidAir(w, T=30, rh=0.6, p_tot=1)
-  T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
+  h = HumidAir(h, T=298.15K, rh=0.5, p_tot=1)   {25°C}
+  h = HumidAir(h, T=25°C, rh=0.5, p_tot=1)      {also valid}
+  w = HumidAir(w, T=303.15K, rh=0.6, p_tot=1)   {30°C}
+  T_dp = HumidAir(T_dp, T=298.15K, w=0.01, p_tot=1)
 
 RADIATION FUNCTIONS (Blackbody):
 --------------------------------
-All functions: T in [C], wavelength in [um]
+All functions: T in [K], wavelength in [um]
 
   Eb(T, lambda)              Spectral emissive power [W/(m2*um)]
   Blackbody(T, l1, l2)       Fraction of energy in wavelength range [-]
@@ -1548,10 +1579,11 @@ All functions: T in [C], wavelength in [um]
   Stefan_Boltzmann(T)        Total emissive power [W/m2]
 
 Examples:
-  E = Eb(300, 5)                    {Spectral power at 300C, 5um}
-  f = Blackbody(1000, 0.4, 0.7)     {Visible light fraction}
-  lambda_max = Wien(500)             {Peak wavelength at 500C}
-  E_total = Stefan_Boltzmann(100)    {Total emission at 100C}
+  E = Eb(573.15K, 5)                  {Spectral power at 300°C, 5um}
+  E = Eb(300°C, 5)                    {also valid}
+  f = Blackbody(1273.15K, 0.4, 0.7)   {Visible light fraction at 1000°C}
+  lambda_max = Wien(773.15K)          {Peak wavelength at 500°C}
+  E_total = Stefan_Boltzmann(373.15K) {Total emission at 100°C}
 
 RESERVED VARIABLE NAMES (DO NOT USE):
 -------------------------------------
@@ -1629,29 +1661,40 @@ GASES:
         """Fügt ein Beispiel ein."""
         if THERMO_AVAILABLE:
             example = '''"HVAC Equation Solver - Example"
-"Units: T[C], p[bar], h[kJ/kg], s[kJ/(kg K)]"
+"Internal units: T[K], p[bar], h[kJ/kg]"
 
-{--- Example 1: Water properties ---}
-"Saturated steam at 1 bar"
-p_sat = 1
-x_steam = 1
-h_steam = enthalpy(water, p=p_sat, x=x_steam)
-T_sat = temperature(water, p=p_sat, x=x_steam)
-rho_steam = density(water, p=p_sat, x=x_steam)
+{--- Example 1: Water/Steam ---}
+T_1 = 150 °C
+p_1 = 5 bar
+h_1 = enthalpy(water, T=T_1, p=p_1)
+s_1 = entropy(water, T=T_1, p=p_1)
 
-"Saturated liquid at 1 bar"
-x_liquid = 0
-h_liquid = enthalpy(water, p=p_sat, x=x_liquid)
-rho_liquid = density(water, p=p_sat, x=x_liquid)
+{Saturated steam at same pressure}
+x_sat = 1
+T_sat = temperature(water, p=p_1, x=x_sat)
+h_sat = enthalpy(water, p=p_1, x=x_sat)
 
-"Enthalpy of vaporization"
-delta_h_v = h_steam - h_liquid
+{--- Example 2: Humid Air ---}
+T_air = 25 °C
+rh = 0.6
+p_tot = 1 bar
 
-{--- Example 2: R134a refrigerant ---}
-"Saturated vapor at 25 C"
-T_R134a = 25
-h_R134a = enthalpy(R134a, T=T_R134a, x=1)
-p_R134a = pressure(R134a, T=T_R134a, x=1)
+h_air = HumidAir(h, T=T_air, rh=rh, p_tot=p_tot)
+w = HumidAir(w, T=T_air, rh=rh, p_tot=p_tot)
+T_dp = HumidAir(T_dp, T=T_air, rh=rh, p_tot=p_tot)
+T_wb = HumidAir(T_wb, T=T_air, rh=rh, p_tot=p_tot)
+
+{--- Example 3: Thermal Radiation ---}
+T_surface = 500 °C
+epsilon = 0.85
+A = 2 m^2
+sigma = 5.67E-8 W/(m^2*K^4)
+
+{Stefan-Boltzmann radiation}
+Q_rad = epsilon * sigma * A * T_surface^4
+
+{Peak wavelength (Wien's law)}
+lambda_max = Wien(T_surface)
 
 "Press F5 to solve"
 '''

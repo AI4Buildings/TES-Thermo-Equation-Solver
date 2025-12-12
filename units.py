@@ -80,7 +80,7 @@ RADIATION_UNITS = {
 #   m_dot [kg/s] * Δh [kJ/kg] = Q [kJ/s] = Q [kW]
 STANDARD_UNITS = {
     # Dimension -> (Ziel-Einheit, pint-kompatibel)
-    '[temperature]': ('degC', 'degC'),           # Temperatur in °C (für CoolProp)
+    '[temperature]': ('K', 'kelvin'),            # Temperatur in K (SI, für CoolProp und Strahlung)
     '[mass] / [time]': ('kg/s', 'kg/s'),         # Massenstrom in kg/s (SI!)
     '[length] ** 3 / [time]': ('m^3/s', 'm^3/s'), # Volumenstrom in m³/s (SI!)
     '[mass] / [length] ** 3': ('kg/m^3', 'kg/m^3'), # Dichte in kg/m³
@@ -220,11 +220,7 @@ def _convert_to_standard(quantity) -> Tuple[float, str]:
         if unit_str in ('micrometer', 'um', 'µm', 'micron'):
             return (float(quantity.magnitude), 'µm')
 
-        # Spezialfall: Kelvin für Strahlungsberechnungen nicht zu °C konvertieren
-        # Stefan-Boltzmann und Planck-Funktionen benötigen absolute Temperatur
-        # Wenn Benutzer explizit K angibt, soll der Wert in K bleiben
-        if unit_str in ('kelvin', 'K'):
-            return (float(quantity.magnitude), 'K')
+        # K ist jetzt Standard für Temperatur - kein Spezialfall mehr nötig
 
         dim_str = str(quantity.dimensionality)
 

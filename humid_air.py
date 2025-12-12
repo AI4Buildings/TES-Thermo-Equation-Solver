@@ -26,7 +26,7 @@ from scipy.optimize import brentq
 # Mapping of output properties
 # User-Name -> (CoolProp-Key, conversion function SI->User)
 OUTPUT_MAP = {
-    't': ('T', lambda x: x - 273.15),               # K -> °C (dry bulb temperature)
+    't': ('T', lambda x: x),                        # K -> K (bleibt in K)
     'h': ('Hda', lambda x: x / 1000),               # J/kg -> kJ/kg
     'rh': ('R', lambda x: x),                       # dimensionless (0-1)
     'w': ('W', lambda x: x),                        # kg_water/kg_dry_air
@@ -34,14 +34,14 @@ OUTPUT_MAP = {
     'rho_tot': ('Vha', lambda x: 1/x),              # m³/kg -> kg/m³ (humid air density)
     'rho_a': ('Vda', lambda x: 1/x),                # m³/kg -> kg/m³ (dry air density)
     'rho_w': (None, None),                          # Special handling: W / Vda
-    't_dp': ('Tdp', lambda x: x - 273.15),          # K -> °C (dew point)
-    't_wb': ('Twb', lambda x: x - 273.15),          # K -> °C (wet bulb)
+    't_dp': ('Tdp', lambda x: x),                   # K -> K (bleibt in K)
+    't_wb': ('Twb', lambda x: x),                   # K -> K (bleibt in K)
 }
 
 # Mapping of input parameters
 # User-Name -> (CoolProp-Key, conversion function User->SI)
 INPUT_MAP = {
-    't': ('T', lambda x: x + 273.15),               # °C -> K
+    't': ('T', lambda x: x),                        # K -> K (bereits in K)
     'p_tot': ('P', lambda x: x * 1e5),              # bar -> Pa
     'w': ('W', lambda x: x),                        # kg_water/kg_dry_air
     'rh': ('R', lambda x: x),                       # dimensionless (0-1)

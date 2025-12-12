@@ -416,6 +416,18 @@ class DimensionInferrer(ast.NodeVisitor):
         return DimensionInfo(None)
 
 
+def _remove_comments(equation: str) -> str:
+    """Entfernt Kommentare aus einer Gleichung.
+
+    Kommentare sind in "..." oder {...} eingeschlossen.
+    """
+    # Entferne "..." Kommentare
+    result = re.sub(r'"[^"]*"', '', equation)
+    # Entferne {...} Kommentare
+    result = re.sub(r'\{[^}]*\}', '', result)
+    return result.strip()
+
+
 def analyze_equation(equation: str, known_units: Dict[str, str]) -> Dict[str, str]:
     """
     Analysiert eine einzelne Gleichung und leitet neue Einheiten ab.
@@ -429,6 +441,9 @@ def analyze_equation(equation: str, known_units: Dict[str, str]) -> Dict[str, st
     """
     if not PINT_AVAILABLE:
         return {}
+
+    # Entferne Kommentare vor der Analyse
+    equation = _remove_comments(equation)
 
     # Konvertiere known_units zu DimensionInfo
     known_dims = {}

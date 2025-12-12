@@ -7,7 +7,7 @@ Equation solver for teaching and rapid calculation of thermodynamic state change
 ### Erforderliche Bibliotheken
 
 ```bash
-pip install numpy scipy CoolProp matplotlib pint
+pip install numpy scipy CoolProp matplotlib pint customtkinter
 ```
 
 | Bibliothek | Version | Zweck |
@@ -16,7 +16,8 @@ pip install numpy scipy CoolProp matplotlib pint
 | scipy | >= 1.7 | Numerische Solver (fsolve, brentq) |
 | CoolProp | >= 6.4 | Thermodynamische Stoffdaten |
 | matplotlib | >= 3.5 | Diagramme und Plots (optional) |
-| pint | >= 0.20 | Einheitenhandling und Dimensionsanalyse (optional) |
+| pint | >= 0.20 | Einheitenhandling und Dimensionsanalyse |
+| customtkinter | >= 5.0 | Moderne GUI |
 | tkinter | - | GUI (in Python Standard-Library enthalten) |
 
 ### Programm starten
@@ -78,7 +79,7 @@ equation_solver/
 - CoolProp HumidAirProp wrapper for psychrometric calculations
 - Syntax: `HumidAir(property, T=..., rh=..., p_tot=...)`
 - **Output properties** (first argument):
-  - `T` - Dry bulb temperature [°C]
+  - `T` - Dry bulb temperature [K]
   - `h` - Specific enthalpy [kJ/kg_dry_air]
   - `rh` - Relative humidity [-] (0-1)
   - `w` - Humidity ratio [kg_water/kg_dry_air]
@@ -86,10 +87,10 @@ equation_solver/
   - `rho_tot` - Density of humid air [kg/m³]
   - `rho_a` - Density of dry air [kg/m³]
   - `rho_w` - Density of water vapor [kg/m³]
-  - `T_dp` - Dew point temperature [°C]
-  - `T_wb` - Wet bulb temperature [°C]
+  - `T_dp` - Dew point temperature [K]
+  - `T_wb` - Wet bulb temperature [K]
 - **Input parameters** (exactly 3 required):
-  - `T` - Temperature [°C]
+  - `T` - Temperature [K] (use `25 °C` or `298.15 K`)
   - `p_tot` - Total pressure [bar]
   - `rh` - Relative humidity [-]
   - `w` - Humidity ratio [kg/kg]
@@ -100,18 +101,19 @@ equation_solver/
 **Examples:**
 ```
 {Calculate enthalpy}
-h = HumidAir(h, T=25, rh=0.5, p_tot=1)
+T_air = 25 °C
+h = HumidAir(h, T=T_air, rh=0.5, p_tot=1)
 
 {Calculate temperature from enthalpy}
 T = HumidAir(T, h=50, rh=0.5, p_tot=1)
 
 {Dew point temperature}
-T_dp = HumidAir(T_dp, T=30, w=0.012, p_tot=1)
+T_dp = HumidAir(T_dp, T=303.15K, w=0.012, p_tot=1)
 
 {Different parameter combinations}
-w = HumidAir(w, T=25, rh=0.6, p_tot=1)
-rh = HumidAir(rh, T=25, w=0.01, p_tot=1)
-rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
+w = HumidAir(w, T=25°C, rh=0.6, p_tot=1)
+rh = HumidAir(rh, T=298.15K, w=0.01, p_tot=1)
+rho = HumidAir(rho_tot, T=25°C, rh=0.5, p_tot=1)
 ```
 
 ### Strahlung (radiation.py)
@@ -123,25 +125,28 @@ rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
   - `Blackbody_cumulative(T, lambda)` - Kumulativer Anteil von 0 bis λ [-]
   - `Wien(T)` - Wellenlänge maximaler Emission [µm]
   - `Stefan_Boltzmann(T)` - Gesamtemission [W/m²]
-- Einheiten: T in °C, λ in µm
+- Einheiten: T in K (intern), λ in µm
+- Eingabe: `T = 500 °C` oder `T = 773.15 K`
 - Groß-/Kleinschreibung egal: `Eb` = `eb`, `Blackbody` = `blackbody`
 
 ## Einheiten
 
-| Größe | Einheit |
-|-------|---------|
-| Temperatur T | °C |
-| Druck p | bar |
-| Enthalpie h | kJ/kg |
-| Entropie s | kJ/(kg·K) |
-| Innere Energie u | kJ/kg |
-| Dichte rho | kg/m³ |
-| Spez. Volumen v | m³/kg |
-| Dampfqualität x | - (0-1) |
-| Wellenlänge λ | µm |
-| Spektrale Emission Eb | W/(m²·µm) |
-| Gesamtemission E | W/m² |
-| **Winkel (Trigonometrie)** | **Grad (°)** |
+**Wichtig:** Temperaturen werden intern in **Kelvin (K)** verarbeitet. Eingaben mit `°C` werden automatisch konvertiert.
+
+| Größe | Interne Einheit | Eingabe-Beispiele |
+|-------|-----------------|-------------------|
+| Temperatur T | K | `25 °C`, `298.15 K`, `298.15` |
+| Druck p | bar | `1 bar`, `101325 Pa` |
+| Enthalpie h | kJ/kg | `100 kJ/kg` |
+| Entropie s | kJ/(kg·K) | |
+| Innere Energie u | kJ/kg | |
+| Dichte rho | kg/m³ | |
+| Spez. Volumen v | m³/kg | |
+| Dampfqualität x | - (0-1) | |
+| Wellenlänge λ | µm | `5 µm`, `5e-6 m` |
+| Spektrale Emission Eb | W/(m²·µm) | |
+| Gesamtemission E | W/m² | |
+| **Winkel (Trigonometrie)** | **Grad (°)** | |
 
 ### Humid Air Units
 
@@ -153,8 +158,8 @@ rho = HumidAir(rho_tot, T=25, rh=0.5, p_tot=1)
 | Partial pressure p_w | bar |
 | Total pressure p_tot | bar |
 | Densities rho_tot, rho_a, rho_w | kg/m³ |
-| Dew point temperature T_dp | °C |
-| Wet bulb temperature T_wb | °C |
+| Dew point temperature T_dp | K (Anzeige: °C wählbar) |
+| Wet bulb temperature T_wb | K (Anzeige: °C wählbar) |
 
 ### Trigonometrische Funktionen
 
@@ -276,29 +281,23 @@ Nach dem Lösen: Plot → New Plot Window oder Quick Plot X-Y
 
 ```
 {Frischdampf}
-m_dot_1 = 10000/3600
-T_1 = 450
-p_1 = 30
+m_dot_1 = 10000/3600 kg/s
+T_1 = 450 °C
+p_1 = 30 bar
 h_1 = enthalpy(water, p=p_1, T=T_1)
 s_1 = entropy(water, p=p_1, T=T_1)
 
 {Hochdruck-Turbine}
-p_2 = 2.5
+p_2 = 2.5 bar
 eta_s_i_T = 0.8
 h_2s = enthalpy(water, p=p_2, s=s_1)
 eta_s_i_T = (h_2-h_1)/(h_2s-h_1)
 
 {Kondensator}
 x_4 = 0
-T_4 = 50
+T_4 = 50 °C
 p_4 = pressure(water, x=x_4, T=T_4)
 h_4 = enthalpy(water, x=x_4, T=T_4)
-
-{Speisewasserpumpe}
-eta_s_i_P = 0.92
-p_5 = p_11
-h_5s = enthalpy(water, p=p_5, s=s_4)
-eta_s_i_P = (h_5s-h_4)/(h_5-h_4)
 
 {Wirkungsgrad}
 W_dot_T = m_dot_1*(h_1-h_2)
@@ -310,9 +309,9 @@ eta_th = W_dot_T/Q_dot
 
 ```
 {Outdoor air (State 1)}
-T_1 = 35
+T_1 = 35 °C
 rh_1 = 0.6
-p = 1
+p = 1 bar
 
 {Calculate state properties}
 h_1 = HumidAir(h, T=T_1, rh=rh_1, p_tot=p)
@@ -320,22 +319,37 @@ w_1 = HumidAir(w, T=T_1, rh=rh_1, p_tot=p)
 T_dp_1 = HumidAir(T_dp, T=T_1, rh=rh_1, p_tot=p)
 T_wb_1 = HumidAir(T_wb, T=T_1, rh=rh_1, p_tot=p)
 
-{Densities}
-rho_tot_1 = HumidAir(rho_tot, T=T_1, rh=rh_1, p_tot=p)
-rho_a_1 = HumidAir(rho_a, T=T_1, rh=rh_1, p_tot=p)
-rho_w_1 = HumidAir(rho_w, T=T_1, rh=rh_1, p_tot=p)
-
-{Partial pressure}
-p_w_1 = HumidAir(p_w, T=T_1, rh=rh_1, p_tot=p)
-
 {Conditioned air (State 2)}
-T_2 = 22
+T_2 = 22 °C
 rh_2 = 0.5
 h_2 = HumidAir(h, T=T_2, rh=rh_2, p_tot=p)
 w_2 = HumidAir(w, T=T_2, rh=rh_2, p_tot=p)
 
 {Cooling load}
-m_dot_a = 1000/3600           {1000 kg/h dry air}
+m_dot_a = 1000/3600 kg/s
 Q_dot_cool = m_dot_a*(h_1-h_2)
 m_dot_condensate = m_dot_a*(w_1-w_2)
+```
+
+## Example: Thermal Radiation
+
+```
+{Surface temperature and properties}
+T_surface = 500 °C
+epsilon = 0.85
+A = 2 m^2
+sigma = 5.67E-8 W/(m^2*K^4)
+
+{Stefan-Boltzmann radiation}
+Q_rad = epsilon * sigma * A * T_surface^4
+
+{Peak wavelength (Wien's law)}
+lambda_max = Wien(T_surface)
+
+{Spectral emissive power}
+L = 5 µm
+E_spectral = Eb(T_surface, L)
+
+{Fraction of energy in visible range}
+f_visible = Blackbody(T_surface, 0.38, 0.75)
 ```
