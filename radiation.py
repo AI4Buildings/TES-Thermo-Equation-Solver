@@ -36,6 +36,31 @@ def _celsius_to_kelvin(T_celsius):
     return np.asarray(T_celsius) + 273.15
 
 
+def _normalize_wavelength(wavelength):
+    """
+    Normalisiert Wellenlänge zu µm.
+
+    Wenn der Wert sehr klein ist (< 0.0001), wird angenommen dass er in Metern
+    angegeben ist und zu µm konvertiert (Faktor 1e6).
+
+    Typische Wellenlängen für Wärmestrahlung: 0.1-100 µm
+    """
+    wavelength = np.asarray(wavelength)
+
+    # Schwelle: 0.0001 µm = 0.1 nm (extrem kurz, unwahrscheinlich)
+    # Wenn wavelength < 0.0001, ist es wahrscheinlich in Metern
+    threshold = 0.0001
+
+    if wavelength.ndim == 0:
+        # Skalar
+        if wavelength < threshold:
+            return wavelength * 1e6  # m -> µm
+        return wavelength
+    else:
+        # Array
+        return np.where(wavelength < threshold, wavelength * 1e6, wavelength)
+
+
 def Eb(T, wavelength):
     """
     Berechnet die spektrale (monochromatische) Emissionsleistung eines Schwarzkörpers.
@@ -45,7 +70,8 @@ def Eb(T, wavelength):
 
     Args:
         T: Temperatur in °C (Skalar oder Array)
-        wavelength: Wellenlänge in µm (Skalar oder Array)
+        wavelength: Wellenlänge in µm oder m (automatische Erkennung)
+                   Werte < 0.0001 werden als Meter interpretiert
 
     Returns:
         Spektrale Emissionsleistung in W/(m²·µm)
@@ -53,9 +79,11 @@ def Eb(T, wavelength):
     Beispiel:
         >>> Eb(1000, 3.0)  # Bei 1000°C und 3 µm
         52889.7...
+        >>> Eb(1000, 3e-6)  # Bei 1000°C und 3e-6 m = 3 µm (gleich!)
+        52889.7...
     """
     T = np.asarray(T)
-    wavelength = np.asarray(wavelength)
+    wavelength = _normalize_wavelength(wavelength)  # Auto-Konvertierung m -> µm
     T_kelvin = _celsius_to_kelvin(T)
 
     # Validierung für Skalare
@@ -141,8 +169,8 @@ def Blackbody(T, lambda1, lambda2):
 
     Args:
         T: Temperatur in °C (Skalar oder Array)
-        lambda1: Untere Wellenlänge in µm (Skalar)
-        lambda2: Obere Wellenlänge in µm (Skalar)
+        lambda1: Untere Wellenlänge in µm oder m (automatische Erkennung)
+        lambda2: Obere Wellenlänge in µm oder m (automatische Erkennung)
 
     Returns:
         Anteil der Strahlung im Bereich (dimensionslos, 0-1)
@@ -153,6 +181,8 @@ def Blackbody(T, lambda1, lambda2):
     """
     T = np.asarray(T)
     T_kelvin = _celsius_to_kelvin(T)
+    lambda1 = float(_normalize_wavelength(lambda1))  # Auto-Konvertierung m -> µm
+    lambda2 = float(_normalize_wavelength(lambda2))  # Auto-Konvertierung m -> µm
 
     # Validierung
     if T_kelvin.ndim == 0 and T_kelvin <= 0:
@@ -199,13 +229,13 @@ def Blackbody_cumulative(T, wavelength):
 
     Args:
         T: Temperatur in °C (Skalar oder Array)
-        wavelength: Obere Wellenlänge in µm (Skalar oder Array)
+        wavelength: Obere Wellenlänge in µm oder m (automatische Erkennung)
 
     Returns:
         Kumulativer Anteil der Strahlung (dimensionslos, 0-1)
     """
     T = np.asarray(T)
-    wavelength = np.asarray(wavelength)
+    wavelength = _normalize_wavelength(wavelength)  # Auto-Konvertierung m -> µm
     T_kelvin = _celsius_to_kelvin(T)
 
     # Validierung für Skalare

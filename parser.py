@@ -15,6 +15,14 @@ import re
 import numpy as np
 from typing import List, Set, Tuple, Dict, Union, Any
 
+# Einheiten-Modul (optional, falls nicht vorhanden wird ohne Einheiten gearbeitet)
+try:
+    from units import parse_value_with_unit, UnitValue
+    UNITS_AVAILABLE = True
+except ImportError:
+    UNITS_AVAILABLE = False
+    UnitValue = None
+
 
 # Mathematische Funktionen die unterstützt werden
 MATH_FUNCTIONS = {
@@ -90,32 +98,56 @@ def parse_vector(value_str: str) -> Union[np.ndarray, None]:
     return None
 
 
-def is_vector_assignment(line: str) -> Tuple[bool, str, str]:
+def is_vector_assignment(line: str, parse_units: bool = False) -> Tuple[bool, str, str, str]:
     """
     Prüft ob eine Zeile eine Vektor-Zuweisung ist.
 
+    Args:
+        line: Die zu prüfende Zeile
+        parse_units: Ob Einheiten geparst werden sollen
+
     Returns:
-        (is_vector, var_name, vector_string)
+        (is_vector, var_name, vector_string, unit_string)
+        unit_string ist leer wenn keine Einheit gefunden wurde
     """
     if '=' not in line or ':' not in line:
-        return False, '', ''
+        return False, '', '', ''
 
     parts = line.split('=', 1)
     if len(parts) != 2:
-        return False, '', ''
+        return False, '', '', ''
 
     left = parts[0].strip()
     right = parts[1].strip()
 
     # Links muss eine einfache Variable sein
     if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', left):
-        return False, '', ''
+        return False, '', '', ''
 
     # Rechts muss Vektor-Syntax sein
     if parse_vector(right) is not None:
-        return True, left, right
+        return True, left, right, ''
 
-    return False, '', ''
+    # Wenn Einheiten aktiviert: Versuche Einheit vom Ende abzutrennen
+    if parse_units and UNITS_AVAILABLE:
+        # Versuche verschiedene Trennungen: "100:20:200 °C" oder "100:20:200°C"
+        # Suche nach dem letzten Zahlenwert im Vektor-Teil
+        vec_unit_match = re.match(r'^(-?\d+\.?\d*):(-?\d+\.?\d*):(-?\d+\.?\d*)\s*(.+)$', right)
+        if vec_unit_match:
+            vec_part = f"{vec_unit_match.group(1)}:{vec_unit_match.group(2)}:{vec_unit_match.group(3)}"
+            unit_part = vec_unit_match.group(4).strip()
+            if parse_vector(vec_part) is not None:
+                return True, left, vec_part, unit_part
+
+        # Auch start:end Format mit Einheit
+        vec_unit_match2 = re.match(r'^(-?\d+\.?\d*):(-?\d+\.?\d*)\s*(.+)$', right)
+        if vec_unit_match2:
+            vec_part = f"{vec_unit_match2.group(1)}:{vec_unit_match2.group(2)}"
+            unit_part = vec_unit_match2.group(3).strip()
+            if parse_vector(vec_part) is not None:
+                return True, left, vec_part, unit_part
+
+    return False, '', '', ''
 
 
 def remove_comments(text: str) -> str:
@@ -334,16 +366,23 @@ def extract_variables(equation: str) -> Set[str]:
     return variables
 
 
-def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
+def parse_equations(text: str, parse_units: bool = True) -> Tuple[List[str], Set[str], dict, dict, dict, dict]:
     """
     Parst den Eingabetext und extrahiert Gleichungen und Variablen.
+
+    Unterstützt Einheiten-Syntax: T = 15°C, m = 10g, h = 2500kJ/kg
+
+    Args:
+        text: Der zu parsende Text
+        parse_units: Wenn True, werden Einheiten erkannt und verarbeitet
 
     Returns:
         equations: Liste von Gleichungen in Python-Syntax (als f(x) = 0 Form)
         variables: Set aller gefundenen Variablen (ohne Sweep-Variable)
-        initial_values: Dict mit vorgegebenen Werten (direkte Zuweisungen)
+        initial_values: Dict mit vorgegebenen Werten
         sweep_vars: Dict mit Vektor-Variablen {name: numpy.array}
         original_equations: Dict Mapping parsed -> original für Anzeige
+        unit_values: Dict mit Einheiten-Informationen {var_name: UnitValue}
     """
     # Speichere Original-Text vor Kommentar-Entfernung für Mapping
     original_text = text
@@ -360,6 +399,7 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
     initial_values = {}
     sweep_vars = {}  # Vektor-Variablen für Parameterstudien
     original_equations = {}  # Mapping: parsed -> original
+    unit_values = {}  # Einheiten-Informationen für Variablen
 
     for i, line in enumerate(lines):
         line = line.strip()
@@ -375,10 +415,32 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
         if '=' not in line:
             continue
 
-        # Prüfe auf Vektor-Zuweisung (z.B. T = 0:10:100)
-        is_vec, var_name, vec_str = is_vector_assignment(line)
+        # Prüfe auf Vektor-Zuweisung (z.B. T = 0:10:100 oder T = 0:10:100 °C)
+        is_vec, var_name, vec_str, vec_unit = is_vector_assignment(line, parse_units=parse_units)
         if is_vec:
-            sweep_vars[var_name] = parse_vector(vec_str)
+            vec_array = parse_vector(vec_str)
+            # Wenn Einheit angegeben: Konvertiere zu Standard-Berechnungseinheit
+            if vec_unit and UNITS_AVAILABLE:
+                try:
+                    from units import UnitValue
+                    # Erstelle UnitValue für ersten Wert um Konvertierungsfaktor zu bekommen
+                    first_uv = UnitValue.from_input(vec_array[0], vec_unit)
+                    # Berechne Konvertierungsfaktor: calc_value / original_value
+                    if first_uv.original_value != 0:
+                        conversion_factor = first_uv.calc_value / first_uv.original_value
+                        # Wende Faktor auf alle Werte an (für lineare Konvertierungen)
+                        calc_values = vec_array * conversion_factor
+                    else:
+                        # Offset-Konvertierung (z.B. °C zu K): Konvertiere einzeln
+                        calc_values = np.array([UnitValue.from_input(v, vec_unit).calc_value for v in vec_array])
+                    sweep_vars[var_name] = calc_values
+                    # Speichere UnitValue für Anzeige (erster Wert)
+                    unit_values[var_name] = first_uv
+                except Exception as e:
+                    # Bei Fehler: verwende Original-Werte ohne Konvertierung
+                    sweep_vars[var_name] = vec_array
+            else:
+                sweep_vars[var_name] = vec_array
             # Variable NICHT zu all_variables hinzufügen (wird separat behandelt)
             continue
 
@@ -394,6 +456,46 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
         left = parts[0].strip()
         right = parts[1].strip()
 
+        # FRÜHE PRÜFUNG: Ist links eine einzelne Variable und rechts ein Wert mit Einheit?
+        # Dies muss VOR tokenize_equation passieren, da Einheiten sonst falsch geparst werden
+        if UNITS_AVAILABLE and re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', left):
+            try:
+                from units import UnitValue
+                magnitude, unit_str = parse_value_with_unit(right)
+                if unit_str:
+                    # Wert mit Einheit gefunden (z.B. "15°C", "10g", "2.5kJ/kg")
+                    var_name = left
+
+                    # Spezialfall: Temperaturdifferenz (dT, DT, delta_T, etc.)
+                    # K sollte als Differenz behandelt werden, nicht als absolute Temperatur
+                    is_temp_diff = (
+                        unit_str.upper() == 'K' and
+                        (var_name.lower().startswith('d') or
+                         var_name.lower().startswith('delta') or
+                         '_d' in var_name.lower() or
+                         'diff' in var_name.lower())
+                    )
+
+                    if is_temp_diff:
+                        # Temperaturdifferenz: 1K = 1°C Differenz
+                        # Keine Konvertierung nötig, Wert bleibt gleich
+                        initial_values[var_name] = magnitude
+                        if parse_units:
+                            # Erstelle UnitValue mit K als Differenz-Einheit
+                            unit_values[var_name] = UnitValue.from_input(magnitude, 'delta_degC')
+                    else:
+                        unit_value = UnitValue.from_input(magnitude, unit_str)
+                        # Verwende calc_value für Berechnungen (konvertiert zu Standard-Einheit)
+                        # z.B. 10 kg/h → 0.00278 kg/s, aber 20°C bleibt 20°C
+                        initial_values[var_name] = unit_value.calc_value
+
+                        # Speichere Einheiten-Info nur wenn parse_units aktiviert
+                        if parse_units:
+                            unit_values[var_name] = unit_value
+                    continue
+            except ValueError:
+                pass  # Kein gültiger Wert mit Einheit, normale Verarbeitung
+
         # Konvertiere zu Python-Syntax
         left = tokenize_equation(left)
         right = tokenize_equation(right)
@@ -407,8 +509,9 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
         # und rechts eine Zahl oder ein arithmetischer Ausdruck ohne Variablen
         if len(vars_left) == 1 and len(vars_right) == 0:
             var_name = list(vars_left)[0]
+
+            # Versuche als einfache Zahl
             try:
-                # Versuche zuerst als einfache Zahl
                 value = float(right)
                 initial_values[var_name] = value
                 continue
@@ -455,7 +558,7 @@ def parse_equations(text: str) -> Tuple[List[str], Set[str], dict, dict, dict]:
     # Entferne Konstanten aus der Variablenliste (sie sind keine Unbekannten)
     all_variables -= set(initial_values.keys())
 
-    return equations, all_variables, initial_values, sweep_vars, original_equations
+    return equations, all_variables, initial_values, sweep_vars, original_equations, unit_values
 
 
 def validate_system(equations: List[str], variables: Set[str]) -> Tuple[bool, str]:

@@ -4,6 +4,7 @@ Equation solver for teaching and rapid calculation of thermodynamic state change
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/License-MIT-green.svg)
+![Version](https://img.shields.io/badge/Version-3.0.0-orange.svg)
 
 ## Features
 
@@ -14,13 +15,15 @@ Equation solver for teaching and rapid calculation of thermodynamic state change
 - **Parameter Studies**: Simple sweep syntax (`p = 25:5:50`)
 - **Blackbody Radiation**: Planck's radiation functions
 - **GUI**: Tkinter-based user interface with plotting capabilities
+- **Unit System** (v3.0): Automatic unit propagation and consistency checking
+- **Dimensional Analysis** (v3.0): Automatic derivation of units for calculated variables
 
 ## Installation
 
 ### Required Libraries
 
 ```bash
-pip install numpy scipy CoolProp matplotlib
+pip install numpy scipy CoolProp matplotlib pint
 ```
 
 | Library | Version | Purpose |
@@ -29,6 +32,7 @@ pip install numpy scipy CoolProp matplotlib
 | scipy | >= 1.7 | Numerical solvers (fsolve, brentq) |
 | CoolProp | >= 6.4 | Thermodynamic property data |
 | matplotlib | >= 3.5 | Diagrams and plots (optional) |
+| pint | >= 0.20 | Unit handling and dimensional analysis (optional) |
 | tkinter | - | GUI (included in Python standard library) |
 
 ### Start the Program
@@ -49,14 +53,16 @@ The application provides an intuitive interface for entering equations and displ
 
 ```
 HVAC-Equation-Solver/
-├── main.py           # Tkinter GUI (main application)
-├── parser.py         # Equation syntax → Python conversion
-├── solver.py         # Block decomposition + bracket search solver
-├── thermodynamics.py # CoolProp wrapper with unit conversion
-├── humid_air.py      # CoolProp HumidAirProp wrapper
-├── radiation.py      # Blackbody radiation functions
-├── CLAUDE.md         # Technical documentation
-└── README.md         # This file
+├── main.py              # Tkinter GUI (main application)
+├── parser.py            # Equation syntax → Python conversion
+├── solver.py            # Block decomposition + bracket search solver
+├── thermodynamics.py    # CoolProp wrapper with unit conversion
+├── humid_air.py         # CoolProp HumidAirProp wrapper
+├── radiation.py         # Blackbody radiation functions
+├── units.py             # Unit handling and conversion (v3.0)
+├── unit_constraints.py  # Unit propagation and consistency checking (v3.0)
+├── CLAUDE.md            # Technical documentation
+└── README.md            # This file
 ```
 
 ## Quick Start
@@ -192,6 +198,79 @@ Input: `T`, `p_tot`, `rh`, `w`, `p_w`, `h`
 
 ### Radiation
 `Eb`, `Blackbody`, `Blackbody_cumulative`, `Wien`, `Stefan_Boltzmann`
+
+## Unit System (v3.0)
+
+The solver now supports automatic unit handling and propagation:
+
+### Specifying Units
+
+```
+T_s = 90 °C
+p = 1 bar
+sigma = 5.67e-8 W/m^2K^4
+L = 4 µm
+```
+
+### Automatic Unit Propagation
+
+Units are automatically derived for calculated variables:
+
+```
+h = 25 W/m^2K           {heat transfer coefficient}
+T_s = 90 °C
+T_inf = 20 °C
+q_dot = h*(T_s - T_inf)  {automatically gets W/m^2}
+```
+
+### Supported Unit Types
+
+| Category | Examples |
+|----------|----------|
+| Temperature | °C, K, °F |
+| Pressure | bar, Pa, kPa, MPa, atm, psi |
+| Energy | kJ, J, kWh |
+| Power | kW, W |
+| Mass flow | kg/s, kg/h |
+| Heat flux | W/m^2 |
+| Heat transfer coeff. | W/m^2K |
+| Thermal resistance | m^2K/W |
+| Wavelength | µm, nm, m |
+| Stefan-Boltzmann | W/m^2K^4 |
+
+### Dimensional Analysis
+
+The solver automatically:
+- Propagates units through algebraic expressions
+- Handles exponents (e.g., `T^4` with temperature units)
+- Recognizes dimensionless quantities (Nusselt, Grashof, Prandtl numbers)
+- Validates unit consistency in equations
+
+### Example: Natural Convection
+
+```
+{Fluid properties}
+g = 9.81 m/s^2
+k = 0.02772 W/mK
+nu = 18.71e-6 m^2/s
+Pr = 0.721
+L = 1 m
+
+{Temperatures}
+T_s = 90 °C
+T_inf = 20 °C
+
+{Grashof and Nusselt numbers - automatically dimensionless}
+beta = 1/(0.5*(T_s + T_inf))
+Gr = g*beta*L^3*(T_s - T_inf)/nu^2
+Nusselt = 0.59*(Gr*Pr)^0.25
+
+{Heat transfer coefficient - automatically W/m^2K}
+Nusselt = h*L/k
+
+{Heat flux - automatically W/m^2}
+q_dot = h*(T_s - T_inf)
+```
 
 ## License
 

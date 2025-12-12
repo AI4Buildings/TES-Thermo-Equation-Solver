@@ -21,6 +21,20 @@ from parser import parse_equations, validate_system
 from solver import solve_system, solve_parametric, format_solution, SolveAnalysis
 import numpy as np
 
+# Versuche Units-Modul zu laden
+try:
+    from units import get_compatible_units, UnitValue, detect_unit_from_equation
+    UNITS_AVAILABLE = True
+except ImportError:
+    UNITS_AVAILABLE = False
+
+# Versuche Constraint-Propagation zu laden
+try:
+    from unit_constraints import propagate_all_units, check_all_unit_consistency
+    CONSTRAINT_PROPAGATION_AVAILABLE = True
+except ImportError:
+    CONSTRAINT_PROPAGATION_AVAILABLE = False
+
 # CustomTkinter Einstellungen
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
@@ -114,6 +128,10 @@ class EquationSolverApp(ctk.CTk):
         self.last_sweep_vars = {}
         self.last_solve_stats = {}
         self.last_analysis = None
+        self.current_unit_values = {}  # Einheiten-Informationen für Variablen
+        self.value_labels = {}  # Referenzen auf Value-Labels (für Unit-Änderung)
+        self.unit_dropdowns = {}  # Referenzen auf Unit-Dropdowns
+        self.units_enabled = ctk.BooleanVar(value=True)  # Einheiten-Modus aktiviert
 
         # Grid-Konfiguration
         self.grid_columnconfigure(0, weight=1)
@@ -177,7 +195,7 @@ class EquationSolverApp(ctk.CTk):
                                  text_color=COLORS["text_dim"],
                                  fg_color=COLORS["bg_dark"], corner_radius=4,
                                  width=24, height=18)
-        f5_label.pack(side="left", padx=(0, 15))
+        f5_label.pack(side="left", padx=(0, 10))
 
         # Clear Button
         self.clear_btn = ctk.CTkButton(
@@ -353,6 +371,15 @@ class EquationSolverApp(ctk.CTk):
         )
         self.result_status_label.pack(side="left")
 
+        # Unit Warning Label (⚠ UNIT WARNINGS)
+        self.unit_warning_label = ctk.CTkLabel(
+            self.status_frame,
+            text="",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLORS["warning"]
+        )
+        self.unit_warning_label.pack(side="left", padx=(20, 0))
+
         # Stats Label (15 direct, 1 iterative)
         self.result_stats_label = ctk.CTkLabel(
             self.status_frame,
@@ -434,7 +461,8 @@ class EquationSolverApp(ctk.CTk):
         # Sections storage
         self.residuals_sections = []
 
-    def _create_collapsible_section(self, parent, title: str, count: int, row: int) -> ctk.CTkFrame:
+    def _create_collapsible_section(self, parent, title: str, count: int, row: int,
+                                      header_color: str = None) -> ctk.CTkFrame:
         """Erstellt eine aufklappbare Sektion für die Residuals."""
         # Main container
         section_frame = ctk.CTkFrame(parent, fg_color=COLORS["bg_frame"], corner_radius=6)
@@ -451,7 +479,7 @@ class EquationSolverApp(ctk.CTk):
         expand_btn = ctk.CTkLabel(
             header, text="▼", width=20,
             font=ctk.CTkFont(size=10),
-            text_color=COLORS["text_dim"]
+            text_color=header_color or COLORS["text_dim"]
         )
         expand_btn.grid(row=0, column=0, padx=(5, 0))
 
@@ -459,7 +487,7 @@ class EquationSolverApp(ctk.CTk):
         title_label = ctk.CTkLabel(
             header, text=f"{title} ({count})",
             font=ctk.CTkFont(size=12, weight="bold"),
-            text_color=COLORS["text"],
+            text_color=header_color or COLORS["text"],
             anchor="w"
         )
         title_label.grid(row=0, column=1, sticky="w", padx=5)
@@ -521,6 +549,69 @@ class EquationSolverApp(ctk.CTk):
         )
         res_label.grid(row=0, column=1, sticky="e", padx=5)
 
+    def _add_unit_warning_row(self, parent, warning, row: int):
+        """Fügt eine Zeile für eine Einheiten-Warnung hinzu."""
+        from solver import UnitWarning
+
+        # Main container für diese Warnung
+        warning_frame = ctk.CTkFrame(parent, fg_color=COLORS["bg_dark"], corner_radius=4)
+        warning_frame.grid(row=row, column=0, sticky="ew", pady=3)
+        warning_frame.grid_columnconfigure(0, weight=1)
+
+        # Variable Name Header
+        var_frame = ctk.CTkFrame(warning_frame, fg_color="transparent")
+        var_frame.pack(fill="x", padx=8, pady=(5, 2))
+
+        ctk.CTkLabel(
+            var_frame, text=f"Variable: {warning.variable}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=COLORS["warning"],
+            anchor="w"
+        ).pack(side="left")
+
+        # Faktor anzeigen
+        if warning.conversion_factor != 1.0:
+            ctk.CTkLabel(
+                var_frame, text=f"Faktor {warning.conversion_factor:.0f}×",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=COLORS["error"],
+                anchor="e"
+            ).pack(side="right")
+
+        # Gleichungen mit ihren Einheiten
+        for eq, unit in warning.units.items():
+            eq_frame = ctk.CTkFrame(warning_frame, fg_color="transparent")
+            eq_frame.pack(fill="x", padx=15, pady=1)
+
+            # Gleichung (gekürzt)
+            eq_display = eq if len(eq) < 45 else eq[:42] + "..."
+            ctk.CTkLabel(
+                eq_frame, text=f"• {eq_display}",
+                font=ctk.CTkFont(size=10),
+                text_color=COLORS["text_dim"],
+                anchor="w"
+            ).pack(side="left")
+
+            # Einheit
+            unit_display = unit if unit else "(dimensionslos)"
+            ctk.CTkLabel(
+                eq_frame, text=f"→ {unit_display}",
+                font=ctk.CTkFont(size=10),
+                text_color=COLORS["accent"],
+                anchor="e"
+            ).pack(side="right")
+
+        # Hinweis
+        hint_frame = ctk.CTkFrame(warning_frame, fg_color="transparent")
+        hint_frame.pack(fill="x", padx=8, pady=(3, 5))
+        ctk.CTkLabel(
+            hint_frame,
+            text="⚠ Prüfen Sie die Einheiten in Ihren Gleichungen!",
+            font=ctk.CTkFont(size=10),
+            text_color=COLORS["warning"],
+            anchor="w"
+        ).pack(side="left")
+
     def _update_residuals_tab(self, analysis: SolveAnalysis):
         """Aktualisiert den Residuals Tab mit den Lösungsdaten."""
         # Placeholder verstecken
@@ -533,6 +624,19 @@ class EquationSolverApp(ctk.CTk):
 
         # Residuals direkt anzeigen
         current_row = 0
+
+        # === Unit Warnings Section ===
+        if analysis.unit_warnings:
+            content = self._create_collapsible_section(
+                self.residuals_content, "⚠ UNIT WARNINGS", len(analysis.unit_warnings), current_row,
+                header_color=COLORS["warning"]
+            )
+            self.residuals_sections.append(content.master)
+
+            for i, warning in enumerate(analysis.unit_warnings):
+                self._add_unit_warning_row(content, warning, i)
+
+            current_row += 1
 
         # === Constants Section ===
         if analysis.constants:
@@ -800,10 +904,12 @@ class EquationSolverApp(ctk.CTk):
         equations_text = self.equations_text.get("1.0", "end-1c")
 
         try:
-            # Parse Gleichungen
-            equations, variables, initial_values, sweep_vars, original_equations = parse_equations(equations_text)
+            # Parse Gleichungen (mit oder ohne Einheiten je nach Checkbox)
+            parse_units = self.units_enabled.get()
+            equations, variables, initial_values, sweep_vars, original_equations, unit_values = parse_equations(equations_text, parse_units=parse_units)
 
             self.known_variables = variables.copy()
+            self.current_unit_values = unit_values if parse_units else {}  # Einheiten nur wenn aktiviert
             self.known_variables.update(sweep_vars.keys())
 
             self.last_solution = None
@@ -821,6 +927,16 @@ class EquationSolverApp(ctk.CTk):
                 self._show_results(initial_values, "Constants only", n_equations, n_variables, "OK")
                 self.last_solution = initial_values.copy()
                 self.status_label.configure(text="Constants calculated")
+                return
+
+            # Spezialfall: Keine Gleichungen, aber Sweep-Variablen
+            if not valid and n_equations == 0 and sweep_vars:
+                # Zeige nur die Sweep-Variablen als Ergebnis
+                sweep_result = {name: arr for name, arr in sweep_vars.items()}
+                n_points = len(list(sweep_vars.values())[0])
+                self._show_results(sweep_result, f"Parametric: {n_points} points", 0, 0, "OK")
+                self.last_solution = sweep_result
+                self.status_label.configure(text=f"Parametric study: {n_points} points")
                 return
 
             if not valid:
@@ -856,6 +972,81 @@ class EquationSolverApp(ctk.CTk):
                 success, solution, solve_msg, analysis = result
                 self.last_analysis = analysis
 
+            # Automatische Einheiten für Thermodynamik-Funktionen erkennen
+            # Zwei-Phasen-Ansatz:
+            # Phase 1: Direkte Erkennung von CoolProp/HumidAir (keine Propagation)
+            # Phase 2: Propagation für Berechnungen (mehrere Durchläufe)
+            if parse_units and UNITS_AVAILABLE and success:
+                # Phase 1: Nur Thermodynamik-Funktionen (ohne Propagation)
+                for var in solution.keys():
+                    if var not in self.current_unit_values:
+                        for parsed_eq, orig_eq in original_equations.items():
+                            if parsed_eq.startswith(f"({var}) - "):
+                                # Erste Phase: nur direkte Erkennung (None = keine Propagation)
+                                detected_unit = detect_unit_from_equation(orig_eq, None)
+                                if detected_unit:
+                                    val = solution[var]
+                                    # Für Arrays: Verwende ersten Wert für UnitValue (nur für Anzeige)
+                                    if isinstance(val, np.ndarray):
+                                        self.current_unit_values[var] = UnitValue.from_si(float(val[0]), detected_unit)
+                                    else:
+                                        self.current_unit_values[var] = UnitValue.from_si(val, detected_unit)
+                                break
+
+                # Phase 2: Propagation für Berechnungen (max 5 Durchläufe)
+                for pass_num in range(5):
+                    found_new = False
+                    for var in solution.keys():
+                        if var not in self.current_unit_values:
+                            for parsed_eq, orig_eq in original_equations.items():
+                                if parsed_eq.startswith(f"({var}) - "):
+                                    # Versuche Propagation mit bekannten Einheiten
+                                    detected_unit = detect_unit_from_equation(orig_eq, self.current_unit_values)
+                                    if detected_unit:
+                                        val = solution[var]
+                                        # Für Arrays: Verwende ersten Wert für UnitValue
+                                        if isinstance(val, np.ndarray):
+                                            self.current_unit_values[var] = UnitValue.from_si(float(val[0]), detected_unit)
+                                        else:
+                                            self.current_unit_values[var] = UnitValue.from_si(val, detected_unit)
+                                        found_new = True
+                                    break
+                    if not found_new:
+                        break
+
+                # Phase 2.5: Constraint-Propagation für implizite Gleichungen
+                if CONSTRAINT_PROPAGATION_AVAILABLE:
+                    known_units = {var: uv.original_unit for var, uv in self.current_unit_values.items()
+                                   if uv.original_unit}
+                    # Füge Konstanten ohne Einheit als dimensionslos hinzu
+                    for var in constants:
+                        if var not in known_units:
+                            known_units[var] = ''  # dimensionslos
+                    inferred = propagate_all_units(original_equations, known_units)
+                    for var, unit in inferred.items():
+                        if var in solution:
+                            # Aktualisiere auch wenn schon vorhanden aber ohne Einheit
+                            existing = self.current_unit_values.get(var)
+                            if existing is None or not existing.original_unit:
+                                val = solution[var]
+                                # Für Arrays: Verwende ersten Wert für UnitValue
+                                if isinstance(val, np.ndarray):
+                                    self.current_unit_values[var] = UnitValue.from_si(float(val[0]), unit)
+                                else:
+                                    self.current_unit_values[var] = UnitValue.from_si(val, unit)
+
+                # Phase 3: Einheiten-Konsistenzprüfung
+                if CONSTRAINT_PROPAGATION_AVAILABLE and analysis:
+                    known_units = {var: uv.original_unit for var, uv in self.current_unit_values.items()
+                                   if uv.original_unit}
+                    # Füge Konstanten ohne Einheit als dimensionslos hinzu
+                    for var in constants:
+                        if var not in known_units:
+                            known_units[var] = ''
+                    unit_warnings = check_all_unit_consistency(solution, original_equations, known_units)
+                    if unit_warnings:
+                        analysis.unit_warnings = unit_warnings
+
             if success:
                 self._show_results(solution, solve_msg, n_equations, n_variables, "OK")
                 self.last_solution = solution
@@ -866,6 +1057,14 @@ class EquationSolverApp(ctk.CTk):
                     # Residuals Tab aktualisieren
                     if analysis:
                         self._update_residuals_tab(analysis)
+                        # Unit Warning Label im Results Tab aktualisieren
+                        if analysis.unit_warnings:
+                            n_warnings = len(analysis.unit_warnings)
+                            self.unit_warning_label.configure(
+                                text=f"⚠ UNIT WARNINGS ({n_warnings})"
+                            )
+                        else:
+                            self.unit_warning_label.configure(text="")
             else:
                 self._show_error(solve_msg)
                 if solution:
@@ -874,6 +1073,14 @@ class EquationSolverApp(ctk.CTk):
                 # Auch bei Fehler Residuals anzeigen
                 if analysis:
                     self._update_residuals_tab(analysis)
+                    # Unit Warning Label auch bei Fehler anzeigen
+                    if analysis.unit_warnings:
+                        n_warnings = len(analysis.unit_warnings)
+                        self.unit_warning_label.configure(
+                            text=f"⚠ UNIT WARNINGS ({n_warnings})"
+                        )
+                    else:
+                        self.unit_warning_label.configure(text="")
 
         except Exception as e:
             self._show_error(str(e))
@@ -883,12 +1090,18 @@ class EquationSolverApp(ctk.CTk):
         """Löscht die Ergebnisanzeige."""
         # Status zurücksetzen
         self.result_status_label.configure(text="", text_color=COLORS["text_dim"])
+        self.unit_warning_label.configure(text="")  # Unit Warning zurücksetzen
         self.result_stats_label.configure(text="")
         self.info_label.configure(text="")
 
         # Variablen-Zeilen löschen
         for widget in self.var_rows_container.winfo_children():
             widget.destroy()
+
+        # Unit-Referenzen zurücksetzen
+        self.value_labels = {}
+        self.unit_dropdowns = {}
+        self.current_unit_values = {}
 
         # Residuals Tab zurücksetzen
         for section in self.residuals_sections:
@@ -909,9 +1122,18 @@ class EquationSolverApp(ctk.CTk):
 
         # Info-Zeile
         status_color = COLORS["success"] if status == "OK" else COLORS["error"]
-        self.info_label.configure(
-            text=f"Equations: {n_eq}          Unknowns: {n_var}          Status: {status}"
-        )
+        # Prüfe ob Parameterstudie (Arrays in Lösung)
+        has_arrays = any(isinstance(v, np.ndarray) for v in solution.values())
+        if has_arrays:
+            n_points = max(len(v) for v in solution.values() if isinstance(v, np.ndarray))
+            info_text = f"Parametric Study: {n_points} points          Use Plot menu for visualization"
+        else:
+            info_text = f"Equations: {n_eq}          Unknowns: {n_var}          Status: {status}"
+        self.info_label.configure(text=info_text)
+
+        # Referenzen zurücksetzen
+        self.value_labels = {}
+        self.unit_dropdowns = {}
 
         # Variablen-Tabelle
         row_idx = 0
@@ -931,23 +1153,105 @@ class EquationSolverApp(ctk.CTk):
             )
             var_label.pack(side="left", padx=5)
 
-            # Value
-            if isinstance(val, np.ndarray):
-                val_text = f"[{len(val)} values]"
-            elif abs(val) >= 1e6 or (abs(val) < 1e-4 and val != 0):
-                val_text = f"{val:.6e}"
-            else:
-                val_text = f"{val:.6g}"
+            # Prüfe ob Variable eine Einheit hat
+            unit_value = self.current_unit_values.get(var)
+            has_unit = UNITS_AVAILABLE and unit_value and unit_value.original_unit
 
+            # Wert für Anzeige bestimmen
+            if isinstance(val, np.ndarray):
+                # Für Arrays: Zeige Bereich (min → max) für bessere Übersicht
+                min_val = np.nanmin(val)
+                max_val = np.nanmax(val)
+                if min_val == max_val:
+                    val_text = f"[{len(val)}× {min_val:.4g}]"
+                else:
+                    val_text = f"[{len(val)}× {min_val:.4g}→{max_val:.4g}]"
+                display_val = val
+            else:
+                # Bei Einheiten: Original-Wert in Original-Einheit anzeigen
+                if has_unit:
+                    display_val = unit_value.original_value
+                else:
+                    display_val = val
+
+                if abs(display_val) >= 1e6 or (abs(display_val) < 1e-4 and display_val != 0):
+                    val_text = f"{display_val:.6e}"
+                else:
+                    val_text = f"{display_val:.6g}"
+
+            # Unit Dropdown oder Platzhalter (rechts außen, vor Value)
+            if has_unit and not isinstance(val, np.ndarray):
+                compatible_units = get_compatible_units(unit_value.original_unit)
+
+                unit_dropdown = ctk.CTkOptionMenu(
+                    row,
+                    values=compatible_units,
+                    width=80,
+                    height=24,
+                    font=ctk.CTkFont(size=11),
+                    fg_color=COLORS["bg_input"],
+                    button_color=COLORS["bg_frame"],
+                    button_hover_color=COLORS["accent"],
+                    dropdown_fg_color=COLORS["bg_frame"],
+                    dropdown_hover_color=COLORS["accent"],
+                    command=lambda u, v=var: self._on_unit_changed(v, u)
+                )
+                unit_dropdown.set(unit_value.original_unit)
+                unit_dropdown.pack(side="right", padx=2)
+                self.unit_dropdowns[var] = unit_dropdown
+            elif isinstance(val, np.ndarray) and UNITS_AVAILABLE and self.units_enabled.get():
+                # Für Arrays: Zeige Einheit als Label (wenn bekannt), sonst "array"
+                array_unit_text = unit_value.original_unit if has_unit else "array"
+                unit_label = ctk.CTkLabel(
+                    row, text=array_unit_text,
+                    font=ctk.CTkFont(size=11),
+                    text_color=COLORS["accent"] if has_unit else COLORS["text_dim"],
+                    width=80, anchor="center"
+                )
+                unit_label.pack(side="right", padx=2)
+            elif UNITS_AVAILABLE and self.units_enabled.get() and not isinstance(val, np.ndarray):
+                # Platzhalter für dimensionslose Werte (für Spaltenausrichtung)
+                unit_placeholder = ctk.CTkLabel(
+                    row, text="-",
+                    font=ctk.CTkFont(size=11),
+                    text_color=COLORS["text_dim"],
+                    width=80, anchor="center"
+                )
+                unit_placeholder.pack(side="right", padx=2)
+
+            # Value Label
             val_label = ctk.CTkLabel(
                 row, text=val_text,
                 font=ctk.CTkFont(size=12),
                 text_color=COLORS["value"],
-                anchor="e"
+                anchor="e",
+                width=120
             )
             val_label.pack(side="right", padx=5)
+            self.value_labels[var] = val_label
 
             row_idx += 1
+
+    def _on_unit_changed(self, var: str, new_unit: str):
+        """Aktualisiert den angezeigten Wert bei Einheitenänderung."""
+        if var not in self.current_unit_values or var not in self.value_labels:
+            return
+
+        unit_value = self.current_unit_values[var]
+        try:
+            # Konvertiere zum neuen Unit
+            new_val = unit_value.to(new_unit)
+
+            # Formatiere Wert
+            if abs(new_val) >= 1e6 or (abs(new_val) < 1e-4 and new_val != 0):
+                val_text = f"{new_val:.6e}"
+            else:
+                val_text = f"{new_val:.6g}"
+
+            # Update Label
+            self.value_labels[var].configure(text=val_text)
+        except Exception as e:
+            print(f"Unit conversion error for {var}: {e}")
 
     def _show_error(self, message: str):
         """Zeigt eine Fehlermeldung im Results Tab an."""
@@ -966,17 +1270,45 @@ class EquationSolverApp(ctk.CTk):
         """Zeigt den Settings Dialog."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Settings")
-        dialog.geometry("300x200")
+        dialog.geometry("320x280")
         dialog.transient(self)
         dialog.grab_set()
 
-        ctk.CTkLabel(dialog, text="Font Size:", font=ctk.CTkFont(size=13)).pack(pady=10)
+        # Font Size
+        ctk.CTkLabel(dialog, text="Font Size:", font=ctk.CTkFont(size=13)).pack(pady=(15, 5))
 
         font_slider = ctk.CTkSlider(dialog, from_=8, to=24, number_of_steps=8,
                                      command=lambda v: self.set_font_size(int(v)))
         font_slider.set(self.font_size)
-        font_slider.pack(pady=10, padx=20, fill="x")
+        font_slider.pack(pady=5, padx=20, fill="x")
 
+        # Separator
+        separator = ctk.CTkFrame(dialog, height=2, fg_color=COLORS["bg_frame"])
+        separator.pack(fill="x", padx=20, pady=15)
+
+        # Units Option
+        ctk.CTkLabel(dialog, text="Unit Handling:", font=ctk.CTkFont(size=13)).pack(pady=(5, 10))
+
+        units_checkbox = ctk.CTkCheckBox(
+            dialog,
+            text="Enable unit parsing and conversion",
+            variable=self.units_enabled,
+            font=ctk.CTkFont(size=12),
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["accent_hover"],
+            text_color=COLORS["text"]
+        )
+        units_checkbox.pack(padx=20, anchor="w")
+
+        ctk.CTkLabel(
+            dialog,
+            text="Parse units like °C, bar, kJ/kg from input\nand show unit dropdowns in results",
+            font=ctk.CTkFont(size=10),
+            text_color=COLORS["text_dim"],
+            justify="left"
+        ).pack(padx=40, anchor="w", pady=(2, 0))
+
+        # Close Button
         ctk.CTkButton(dialog, text="Close", command=dialog.destroy).pack(pady=20)
 
     def show_initial_values_dialog(self):
@@ -1143,7 +1475,7 @@ class EquationSolverApp(ctk.CTk):
         """Zeigt Funktions-Hilfe."""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Function Reference")
-        dialog.geometry("700x600")
+        dialog.geometry("700x750")
 
         text = ctk.CTkTextbox(dialog, font=ctk.CTkFont(family="Courier", size=11))
         text.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1192,6 +1524,52 @@ Syntax: HumidAir(property, T=..., rh=..., p_tot=...)
   h = HumidAir(h, T=25, rh=0.5, p_tot=1)
   w = HumidAir(w, T=30, rh=0.6, p_tot=1)
   T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
+
+RADIATION FUNCTIONS (Blackbody):
+--------------------------------
+All functions: T in [C], wavelength in [um]
+
+  Eb(T, lambda)              Spectral emissive power [W/(m2*um)]
+  Blackbody(T, l1, l2)       Fraction of energy in wavelength range [-]
+  Blackbody_cumulative(T, l) Cumulative fraction from 0 to l [-]
+  Wien(T)                    Wavelength of max emission [um]
+  Stefan_Boltzmann(T)        Total emissive power [W/m2]
+
+Examples:
+  E = Eb(300, 5)                    {Spectral power at 300C, 5um}
+  f = Blackbody(1000, 0.4, 0.7)     {Visible light fraction}
+  lambda_max = Wien(500)             {Peak wavelength at 500C}
+  E_total = Stefan_Boltzmann(100)    {Total emission at 100C}
+
+RESERVED VARIABLE NAMES (DO NOT USE):
+-------------------------------------
+Python keywords (cause syntax errors):
+  lambda, if, else, for, while, class, def, return,
+  import, from, as, try, except, with, pass, break,
+  continue, and, or, not, in, is, True, False, None
+
+Mathematical constants/functions (will be overwritten):
+  pi, e, sin, cos, tan, exp, ln, sqrt, abs, max, min
+
+Thermodynamic functions (case-insensitive):
+  enthalpy, entropy, density, temperature, pressure, etc.
+
+TIPS:
+  - Use descriptive names: lambda_1 instead of lambda
+  - Use subscripts: T_1, p_2, h_in, h_out
+  - For wavelength: use 'L', 'wl', or 'lambda_1'
+  - Euler's number: use exp(1) instead of e
+
+PARAMETRIC STUDIES (Sweeps):
+----------------------------
+Syntax: variable = start:step:end [unit]
+
+Examples:
+  T = 20:5:40           {20, 25, 30, 35, 40}
+  T = 20:5:40 °C        {with unit}
+  p = 1:0.5:3 bar       {1, 1.5, 2, 2.5, 3 bar}
+
+After solving: Use Plot menu for visualization
 """
         text.insert("1.0", help_text)
         text.configure(state="disabled")

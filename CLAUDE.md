@@ -7,7 +7,7 @@ Equation solver for teaching and rapid calculation of thermodynamic state change
 ### Erforderliche Bibliotheken
 
 ```bash
-pip install numpy scipy CoolProp matplotlib
+pip install numpy scipy CoolProp matplotlib pint
 ```
 
 | Bibliothek | Version | Zweck |
@@ -16,6 +16,7 @@ pip install numpy scipy CoolProp matplotlib
 | scipy | >= 1.7 | Numerische Solver (fsolve, brentq) |
 | CoolProp | >= 6.4 | Thermodynamische Stoffdaten |
 | matplotlib | >= 3.5 | Diagramme und Plots (optional) |
+| pint | >= 0.20 | Einheitenhandling und Dimensionsanalyse (optional) |
 | tkinter | - | GUI (in Python Standard-Library enthalten) |
 
 ### Programm starten
@@ -28,12 +29,14 @@ python3 main.py
 
 ```
 equation_solver/
-├── main.py           # Tkinter GUI (Hauptanwendung)
-├── parser.py         # Equation syntax → Python conversion
-├── solver.py         # Block-Dekomposition + Bracket-Suche Solver
-├── thermodynamics.py # CoolProp Wrapper mit Einheitenumrechnung
-├── humid_air.py      # CoolProp HumidAirProp Wrapper für feuchte Luft
-├── radiation.py      # Schwarzkörper-Strahlungsfunktionen (Planck, vektorisiert)
+├── main.py              # Tkinter GUI (Hauptanwendung)
+├── parser.py            # Equation syntax → Python conversion
+├── solver.py            # Block-Dekomposition + Bracket-Suche Solver
+├── thermodynamics.py    # CoolProp Wrapper mit Einheitenumrechnung
+├── humid_air.py         # CoolProp HumidAirProp Wrapper für feuchte Luft
+├── radiation.py         # Schwarzkörper-Strahlungsfunktionen (Planck, vektorisiert)
+├── units.py             # Einheitenhandling und Konvertierung (v3.0)
+├── unit_constraints.py  # Einheiten-Propagation und Konsistenzprüfung (v3.0)
 ```
 
 ## Kernfunktionen
@@ -167,6 +170,63 @@ atan(1) = 45        {Ergebnis in Grad}
 ```
 
 Hyperbolische Funktionen (`sinh`, `cosh`, `tanh`) verwenden Radiant.
+
+## Einheiten-System (v3.0)
+
+### Units Module (units.py)
+- Einheiten-Parsing und Konvertierung basierend auf `pint`
+- `UnitValue`-Klasse speichert SI-Wert und Original-Einheit
+- Automatische Konvertierung zu Standard-Einheiten für Berechnungen
+- Unterstützte Einheiten: °C, K, bar, Pa, kJ, W, kg/s, m²/s, W/m²K, µm, etc.
+
+### Unit Constraints Module (unit_constraints.py)
+- **Einheiten-Propagation**: Leitet Einheiten für berechnete Variablen ab
+- **Dimensionsanalyse**: Verwendet AST-Parsing für algebraische Ausdrücke
+- **Rückwärts-Propagation**: Bei `q = h*dT` wird `h = q/dT` abgeleitet
+- **Konsistenzprüfung**: Warnt bei inkonsistenten Einheiten
+
+### Einheiten-Syntax
+
+```
+T_s = 90 °C              {Temperatur}
+p = 1 bar                {Druck}
+sigma = 5.67e-8 W/m^2K^4 {Stefan-Boltzmann}
+L = 4 µm                 {Wellenlänge}
+h = 25 W/m^2K            {Wärmeübergangskoeffizient}
+```
+
+### Automatische Einheiten-Ableitung
+
+Bei Gleichungen wie:
+```
+q_dot = h*(T_s - T_inf)
+```
+wird automatisch erkannt, dass `q_dot` die Einheit `W/m²` hat.
+
+### Dimensionslose Größen
+
+Dimensionslose Zahlen werden automatisch erkannt:
+- Nusselt-Zahl: `Nu = h*L/k`
+- Grashof-Zahl: `Gr = g*beta*L^3*dT/nu^2`
+- Prandtl-Zahl: `Pr = nu/alpha`
+- Strahlungsanteile: `F = Blackbody(T, lambda1, lambda2)`
+
+### Unterstützte Einheiten-Typen
+
+| Kategorie | Einheiten |
+|-----------|-----------|
+| Temperatur | °C, K, °F |
+| Druck | bar, Pa, kPa, MPa, atm, psi |
+| Energie | kJ, J, kWh |
+| Leistung | kW, W |
+| Massenstrom | kg/s, kg/h |
+| Wärmestromdichte | W/m² |
+| Wärmeübergangskoeff. | W/m²K |
+| Wärmedurchlasswiderstand | m²K/W |
+| Wellenlänge | µm, nm, m |
+| Stefan-Boltzmann | W/m²K⁴ |
+| Kinematische Viskosität | m²/s |
+| Wärmeleitfähigkeit | W/mK |
 
 ## Bekannte Einschränkungen / Design-Entscheidungen
 

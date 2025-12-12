@@ -41,6 +41,20 @@ class BlockInfo:
 
 
 @dataclass
+class UnitWarning:
+    """Warnung für inkonsistente Einheiten einer Variable.
+
+    Wird erzeugt, wenn eine Variable in verschiedenen Gleichungen
+    unterschiedliche Einheiten hätte (z.B. kJ vs bar·m³).
+    """
+    variable: str                    # z.B. "W_v"
+    equations: List[str]             # Beteiligte Gleichungen
+    units: Dict[str, str]            # {equation: inferred_unit}
+    explanation: str                 # Detaillierte Erklärung
+    conversion_factor: float = 1.0   # z.B. 100 für bar*m³ vs kJ
+
+
+@dataclass
 class SolveAnalysis:
     """Vollständige Analyse-Daten einer Lösung."""
     constants: List[EquationInfo] = field(default_factory=list)
@@ -48,6 +62,7 @@ class SolveAnalysis:
     single_unknowns: List[EquationInfo] = field(default_factory=list)
     blocks: List[BlockInfo] = field(default_factory=list)
     solve_order: List[str] = field(default_factory=list)  # Reihenfolge der Lösungsschritte
+    unit_warnings: List[UnitWarning] = field(default_factory=list)  # Einheiten-Inkonsistenzen
 
     def add_constant(self, original: str, parsed: str, var: str, value: float):
         """Fügt eine Konstante hinzu."""
