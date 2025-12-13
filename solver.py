@@ -986,8 +986,16 @@ def _solve_block_simultaneously(
     manual_initial: Dict[str, float] = None
 ) -> Tuple[bool, Dict[str, float], str]:
     """
-    Löst einen Block von Gleichungen simultan mit fsolve.
+    Löst einen Block von Gleichungen simultan mit normalisiertem least_squares.
+
+    Strategie:
+    1. Intelligente Startwerte basierend auf Variablennamen
+    2. Normalisierung: Alle Variablen auf ~1.0 skalieren
+    3. least_squares mit Levenberg-Marquardt (robuster als fsolve)
+    4. Relative Toleranzen für Konvergenzprüfung
     """
+    from scipy.optimize import least_squares
+
     if not equations or not variables:
         return True, {}, "Leerer Block"
 
@@ -998,13 +1006,14 @@ def _solve_block_simultaneously(
     if n_eqs != n_vars:
         return False, {}, f"Block nicht quadratisch: {n_eqs} Gleichungen, {n_vars} Unbekannte"
 
-    # Erstelle Startvektor (manuelle Werte haben Priorität, sonst 1.0)
-    x0 = []
-    for var in var_list:
-        x0.append(_get_initial_value(var, manual_initial))
-    x0 = np.array(x0, dtype=float)
+    # Erstelle Startvektor mit intelligenten Startwerten
+    x0 = np.array([_get_initial_value(var, manual_initial, known_values)
+                   for var in var_list], dtype=float)
 
-    # Erstelle Gleichungsfunktion
+    # Skalierungsfaktoren = initiale Werte (damit normalisierte Variablen ~1.0 sind)
+    scales = np.maximum(np.abs(x0), 1e-10)
+
+    # Residuen-Funktion (nicht normalisiert, für Auswertung)
     def block_func(x):
         local_ctx = context.copy()
         local_ctx.update(known_values)
@@ -1014,59 +1023,227 @@ def _solve_block_simultaneously(
         for eq in equations:
             try:
                 result = eval(eq, {"__builtins__": {}}, local_ctx)
+                if not np.isfinite(result):
+                    result = 1e10
                 results.append(result)
             except Exception:
-                results.append(float('inf'))
+                results.append(1e10)
         return np.array(results)
 
-    # Versuche mehrere Startwerte
+    # Normalisierte Residuen-Funktion für least_squares
+    def normalized_residuals(x_norm):
+        # Zurückskalieren: x_real = x_norm * scale
+        x_real = x_norm * scales
+        return block_func(x_real)
+
+    # Versuche mit least_squares (robuster als fsolve)
     best_solution = None
     best_residual = float('inf')
 
-    # Generiere Variationen der Startwerte
-    start_variations = [x0]
-    for i in range(n_vars):
-        variation = x0.copy()
-        variation[i] *= 1.5
+    # Startwert-Strategien
+    x0_norm = x0 / scales  # Sollte ~1.0 sein für alle Variablen
+
+    start_variations = [
+        x0_norm,
+        x0_norm * 1.5,
+        x0_norm * 0.5,
+        x0_norm * 2.0,
+        x0_norm * 0.25,
+    ]
+
+    # Zusätzliche Variationen für einzelne Variablen
+    for i in range(min(n_vars, 3)):  # Max 3 zusätzliche pro Variable
+        variation = x0_norm.copy()
+        variation[i] *= 3.0
         start_variations.append(variation)
-        variation = x0.copy()
-        variation[i] *= 0.5
+        variation = x0_norm.copy()
+        variation[i] *= 0.1
         start_variations.append(variation)
 
     import warnings
-    for x_start in start_variations[:10]:  # Maximal 10 Versuche
+    for x_start in start_variations[:15]:  # Maximal 15 Versuche
         try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                result = least_squares(
+                    normalized_residuals,
+                    x_start,
+                    method='lm',  # Levenberg-Marquardt
+                    ftol=1e-12,   # Relative Toleranz für Residuen
+                    xtol=1e-12,   # Relative Toleranz für Variablen
+                    max_nfev=500 * n_vars
+                )
+
+            if result.success or result.status in [1, 2, 3, 4]:
+                # Zurückskalieren
+                solution = result.x * scales
+                residual = np.max(np.abs(result.fun))
+
+                # Relative Toleranz: Residuum sollte klein relativ zur Lösungsgröße sein
+                typical_scale = np.max(np.abs(solution)) if np.any(solution != 0) else 1.0
+                relative_residual = residual / max(1.0, typical_scale)
+
+                if relative_residual < 1e-8:
+                    result_dict = {var: val for var, val in zip(var_list, solution)}
+                    return True, result_dict, f"Block gelöst ({n_vars} Variablen)"
+
+                if np.all(np.isfinite(solution)) and residual < best_residual:
+                    best_solution = solution
+                    best_residual = residual
+
+        except Exception:
+            pass
+
+    # Fallback: Versuche fsolve mit verschiedenen Startwerten
+    for x_start_norm in start_variations[:5]:
+        try:
+            x_start = x_start_norm * scales
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 solution, info, ier, _ = fsolve(block_func, x_start, full_output=True)
 
             residual = np.max(np.abs(info['fvec']))
+            typical_scale = np.max(np.abs(solution)) if np.any(solution != 0) else 1.0
 
-            if ier == 1 and np.all(np.isfinite(solution)) and residual < 1e-8:
+            if ier == 1 and np.all(np.isfinite(solution)) and residual < 1e-6 * max(1.0, typical_scale):
                 result_dict = {var: val for var, val in zip(var_list, solution)}
                 return True, result_dict, f"Block gelöst ({n_vars} Variablen)"
-            elif np.all(np.isfinite(solution)) and residual < best_residual:
+
+            if np.all(np.isfinite(solution)) and residual < best_residual:
                 best_solution = solution
                 best_residual = residual
         except Exception:
             pass
 
-    # Akzeptiere gute Näherung
-    if best_solution is not None and best_residual < 1e-4:
-        result_dict = {var: val for var, val in zip(var_list, best_solution)}
-        return True, result_dict, f"Block gelöst (Residuum: {best_residual:.2e})"
+    # Akzeptiere gute Näherung mit relativer Toleranz
+    if best_solution is not None:
+        typical_scale = np.max(np.abs(best_solution)) if np.any(best_solution != 0) else 1.0
+        relative_residual = best_residual / max(1.0, typical_scale)
+
+        if relative_residual < 1e-4:
+            result_dict = {var: val for var, val in zip(var_list, best_solution)}
+            return True, result_dict, f"Block gelöst (rel. Residuum: {relative_residual:.2e})"
 
     return False, {}, f"Block-Konvergenz fehlgeschlagen (Residuum: {best_residual:.2e})"
 
 
-def _get_initial_value(var: str, manual_initial: Dict[str, float] = None) -> float:
-    """Ermittelt den Startwert für eine Variable.
+def _get_initial_value(var: str, manual_initial: Dict[str, float] = None,
+                       known_values: Dict[str, float] = None) -> float:
+    """
+    Ermittelt sinnvolle Startwerte basierend auf Variablennamen.
 
-    Manuelle Startwerte haben Priorität, sonst wird 1.0 verwendet.
+    Für SI-Einheiten sind typische Größenordnungen:
+    - Temperatur T: ~300-800 K
+    - Druck p: ~100000-3000000 Pa (1-30 bar)
+    - Enthalpie h: ~100000-3500000 J/kg
+    - Entropie s: ~1000-8000 J/(kg·K)
+    - Massenstrom m_dot: ~0.1-10 kg/s
+    - Leistung W_dot, Q_dot: ~1000-1000000 W
+    - Dampfqualität x: 0-1
+    - Wirkungsgrad eta: 0-1
     """
     if manual_initial and var in manual_initial:
         return manual_initial[var]
-    return 1.0
+
+    var_lower = var.lower()
+
+    # PRIORITÄT 1: Suche nach ähnlich benannten bekannten Variablen
+    # z.B. für h_5 schaue nach h_4, h_5s, h_1 etc.
+    if known_values:
+        # Extrahiere Basisnamen (z.B. "h" aus "h_5" oder "h_5s")
+        var_base = var_lower.rstrip('0123456789')
+        if var_base.endswith('_'):
+            var_base = var_base[:-1]
+        if var_base.endswith('s'):  # z.B. h_5s -> h_5 -> h
+            var_base = var_base[:-1].rstrip('0123456789_')
+
+        similar_vals = []
+        for kv_name, kv_val in known_values.items():
+            if isinstance(kv_val, (int, float)) and np.isfinite(kv_val):
+                kv_lower = kv_name.lower()
+                kv_base = kv_lower.rstrip('0123456789')
+                if kv_base.endswith('_'):
+                    kv_base = kv_base[:-1]
+                if kv_base.endswith('s'):
+                    kv_base = kv_base[:-1].rstrip('0123456789_')
+
+                if kv_base == var_base and abs(kv_val) > 0.001:
+                    similar_vals.append(kv_val)
+
+        if similar_vals:
+            # Verwende den Durchschnitt der ähnlichen Werte
+            avg = sum(similar_vals) / len(similar_vals)
+            return avg
+
+    # Temperatur (T, T_1, t_ein, etc.) - NICHT tau, theta
+    if var_lower.startswith('t') and not var_lower.startswith('tau') and not var_lower.startswith('theta'):
+        # Taupunkt und Feuchtkugeltemperatur etwas niedriger
+        if '_dp' in var_lower or '_wb' in var_lower:
+            return 290.0  # ~17°C
+        return 400.0  # ~127°C - typisch für Dampfprozesse
+
+    # Druck (p, p_1, p_ein, etc.) - NICHT prandtl, phi
+    if var_lower.startswith('p') and not var_lower.startswith('pr') and not var_lower.startswith('phi'):
+        return 500000.0  # 5 bar
+
+    # Enthalpie (h, h_1, h_ein, etc.) - NICHT humidity
+    if var_lower.startswith('h') and not var_lower.startswith('hum'):
+        return 1000000.0  # 1000 kJ/kg
+
+    # Entropie (s, s_1, etc.)
+    if var_lower.startswith('s') and len(var_lower) <= 4:
+        return 3000.0  # 3 kJ/(kg·K)
+
+    # Leistung (W_dot, Q_dot, P_dot, etc.)
+    if '_dot' in var_lower or 'dot_' in var_lower:
+        if var_lower.startswith('m'):
+            return 1.0  # 1 kg/s Massenstrom
+        if var_lower.startswith('v'):
+            return 0.1  # 0.1 m³/s Volumenstrom
+        # W_dot, Q_dot, P_dot - Leistung
+        return 100000.0  # 100 kW
+
+    # Dampfqualität (x, x_1, x_aus, etc.)
+    if var_lower.startswith('x') and len(var_lower) <= 5:
+        return 0.5
+
+    # Wirkungsgrad (eta, eta_th, eta_s_i_T, etc.)
+    if var_lower.startswith('eta'):
+        return 0.85
+
+    # Relative Feuchte (rh, phi)
+    if var_lower.startswith('rh') or var_lower == 'phi':
+        return 0.5
+
+    # Feuchtegehalt (w als Luftfeuchte - kurze Namen)
+    if var_lower == 'w' or (var_lower.startswith('w_') and len(var_lower) <= 4):
+        return 0.01  # 10 g/kg
+
+    # Dichte (rho, rho_1, etc.)
+    if var_lower.startswith('rho'):
+        return 1.0  # 1 kg/m³
+
+    # Spezifisches Volumen (v, v_1, etc.) - NICHT v_dot
+    if var_lower.startswith('v') and '_dot' not in var_lower and len(var_lower) <= 4:
+        return 0.1  # 0.1 m³/kg
+
+    # Innere Energie (u, u_1, etc.)
+    if var_lower.startswith('u') and len(var_lower) <= 4:
+        return 500000.0  # 500 kJ/kg
+
+    # Fallback: Geometrisches Mittel aller bekannten Werte
+    if known_values:
+        positive_vals = [abs(v) for v in known_values.values()
+                        if isinstance(v, (int, float)) and v > 0.01]
+        if positive_vals:
+            import math
+            try:
+                geo_mean = math.exp(sum(math.log(v) for v in positive_vals) / len(positive_vals))
+                return geo_mean
+            except (ValueError, OverflowError):
+                pass
+
+    return 1.0  # Ultimativer Fallback
 
 
 def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, float],
@@ -1094,9 +1271,8 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
 
     # === Phase 1: Schneller Newton-Raphson Versuch ===
     # Für einfache (oft lineare) Gleichungen konvergiert dies in wenigen Iterationen
-    initial_guess = 1.0
-    if manual_initial and unknown in manual_initial:
-        initial_guess = manual_initial[unknown]
+    # Verwende intelligente Startwerte basierend auf Variablennamen
+    initial_guess = _get_initial_value(unknown, manual_initial, known_values)
 
     try:
         x = initial_guess
@@ -1104,8 +1280,9 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
         for iteration in range(30):  # Max 30 Iterationen
             fx = func(x)
 
-            # Prüfe ob bereits Lösung gefunden (relative Toleranz für große Werte)
-            if abs(fx) < 1e-10 * max(1.0, abs(x)):
+            # Prüfe ob bereits Lösung gefunden
+            # Absolutes Residuum muss klein sein (Gleichung = 0)
+            if abs(fx) < 1e-10:
                 return True, x
 
             # Skalierte Schrittweite für numerische Ableitung
@@ -1124,10 +1301,11 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
             # Newton-Schritt
             x_new = x - fx / dfx
 
-            # Prüfe Konvergenz
+            # Prüfe Konvergenz (relative Änderung)
             if abs(x_new - x) < 1e-10 * max(1, abs(x)):
-                # Verifiziere Lösung
-                if abs(func(x_new)) < 1e-8:
+                # Verifiziere Lösung - absolutes Residuum muss klein sein
+                fx_new = func(x_new)
+                if abs(fx_new) < 1e-8:
                     return True, x_new
                 break
 
@@ -1258,7 +1436,9 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
             root = brentq(func, a, b, xtol=1e-12, rtol=1e-12)
             residual = abs(func(root))
             if np.isfinite(root) and np.isfinite(residual):
-                if residual < 1e-6:  # Gute Lösung gefunden
+                # Absolutes Residuum sollte sehr klein sein (Gleichung = 0)
+                # Bei korrekter Lösung ist f(x) ≈ 0, unabhängig von der Größe von x
+                if residual < 1e-8:
                     return True, float(root)
                 elif residual < best_residual:
                     best_root = root
@@ -1267,13 +1447,15 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
             pass
 
     # Beste gefundene Lösung zurückgeben wenn akzeptabel
-    if best_root is not None and best_residual < 1e-4:
+    # Absolutes Residuum muss klein sein - bei f(x)=0 muss f(root) ≈ 0 sein
+    if best_root is not None and best_residual < 1e-6:
         return True, float(best_root)
 
     # Fallback: fsolve mit verschiedenen Startwerten
-    # Erweiterte Startwerte basierend auf Skalierung für große SI-Werte
+    # Beginne mit intelligentem Startwert basierend auf Variablennamen
     import warnings
-    fallback_starts = [1.0, 0.1, 10.0, 100.0, 1000.0, 10000.0]
+    smart_start = _get_initial_value(unknown, manual_initial, known_values)
+    fallback_starts = [smart_start, 1.0, 0.1, 10.0, 100.0, 1000.0, 10000.0]
     if scale > 1:
         fallback_starts.extend([scale, scale * 0.1, scale * 0.5, scale * 2, scale * 10])
 
@@ -1283,9 +1465,9 @@ def _solve_single_unknown(equation: str, unknown: str, known_values: Dict[str, f
                 warnings.simplefilter("ignore")
                 solution, info, ier, _ = fsolve(func, x0, full_output=True)
             residual = abs(info['fvec'][0])
-            # Relative Toleranz für große Werte
-            tol = 1e-8 * max(1.0, abs(solution[0]))
-            if ier == 1 and np.isfinite(solution[0]) and residual < tol:
+            # Absolutes Residuum muss klein sein - Gleichung ist normiert auf f(x)=0
+            # Bei korrekter Lösung sollte f(x) ≈ 0 sein
+            if ier == 1 and np.isfinite(solution[0]) and residual < 1e-8:
                 return True, float(solution[0])
         except Exception:
             pass
