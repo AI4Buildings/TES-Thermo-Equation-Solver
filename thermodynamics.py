@@ -3,23 +3,23 @@ Thermodynamik-Modul für den HVAC Equation Solver
 
 Verwendet CoolProp für Stoffdatenberechnung mit EES-ähnlicher Syntax.
 
-Einheiten:
-- Temperatur: °C
-- Druck: bar
+Einheiten (SI-Basiseinheiten für interne Berechnungen):
+- Temperatur: K
+- Druck: Pa
 - Dichte: kg/m³
 - Spez. Volumen: m³/kg
-- Spez. Enthalpie: kJ/kg
-- Spez. Entropie: kJ/(kg·K)
-- Spez. innere Energie: kJ/kg
+- Spez. Enthalpie: J/kg
+- Spez. Entropie: J/(kg·K)
+- Spez. innere Energie: J/kg
 - Dampfgehalt (Quality): - (0-1)
 - Viskosität: Pa·s
 - Wärmeleitfähigkeit: W/(m·K)
 - Prandtl-Zahl: -
 
 Syntax (wie EES):
-    h = enthalpy(Water, T=100, p=1)
-    rho = density(R134a, T=25, x=1)
-    s = entropy(Water, p=10, h=500)
+    h = enthalpy(Water, T=373.15, p=100000)  # T in K, p in Pa
+    rho = density(R134a, T=298.15, x=1)
+    s = entropy(Water, p=1000000, h=500000)  # p in Pa, h in J/kg
 """
 
 import CoolProp.CoolProp as CP
@@ -81,30 +81,33 @@ INPUT_MAP = {
 }
 
 # Umrechnungsfaktoren: Interne Einheit -> SI-Einheit (für CoolProp)
+# Da wir intern jetzt SI verwenden, ist keine Konvertierung mehr nötig!
+# CoolProp verwendet: Pa, J/kg, J/(kg·K), K
 TO_SI = {
-    'T': lambda x: x,                # K -> K (bereits in K)
-    'P': lambda x: x * 1e5,          # bar -> Pa
-    'H': lambda x: x * 1000,         # kJ/kg -> J/kg
-    'S': lambda x: x * 1000,         # kJ/(kg·K) -> J/(kg·K)
-    'U': lambda x: x * 1000,         # kJ/kg -> J/kg
+    'T': lambda x: x,                # K -> K
+    'P': lambda x: x,                # Pa -> Pa (bereits SI)
+    'H': lambda x: x,                # J/kg -> J/kg (bereits SI)
+    'S': lambda x: x,                # J/(kg·K) -> J/(kg·K) (bereits SI)
+    'U': lambda x: x,                # J/kg -> J/kg (bereits SI)
     'Q': lambda x: x,                # dimensionslos
     'D': lambda x: x,                # kg/m³
 }
 
 # Umrechnungsfaktoren: SI-Einheit -> Interne Einheit
+# Da wir intern jetzt SI verwenden, ist keine Konvertierung mehr nötig!
 FROM_SI = {
-    'T': lambda x: x,                # K -> K (bleibt in K)
-    'P': lambda x: x / 1e5,          # Pa -> bar
-    'H': lambda x: x / 1000,         # J/kg -> kJ/kg
-    'S': lambda x: x / 1000,         # J/(kg·K) -> kJ/(kg·K)
-    'U': lambda x: x / 1000,         # J/kg -> kJ/kg
+    'T': lambda x: x,                # K -> K
+    'P': lambda x: x,                # Pa -> Pa (bleibt SI)
+    'H': lambda x: x,                # J/kg -> J/kg (bleibt SI)
+    'S': lambda x: x,                # J/(kg·K) -> J/(kg·K) (bleibt SI)
+    'U': lambda x: x,                # J/kg -> J/kg (bleibt SI)
     'Q': lambda x: x,                # dimensionslos
     'D': lambda x: x,                # kg/m³
-    'V': lambda x: x,                # Pa·s (Viskosität bleibt)
-    'L': lambda x: x,                # W/(m·K) (Wärmeleitf. bleibt)
+    'V': lambda x: x,                # Pa·s (Viskosität)
+    'L': lambda x: x,                # W/(m·K) (Wärmeleitfähigkeit)
     'Prandtl': lambda x: x,          # dimensionslos
-    'C': lambda x: x / 1000,         # J/(kg·K) -> kJ/(kg·K)
-    'O': lambda x: x / 1000,         # J/(kg·K) -> kJ/(kg·K)
+    'C': lambda x: x,                # J/(kg·K) -> J/(kg·K) (bleibt SI)
+    'O': lambda x: x,                # J/(kg·K) -> J/(kg·K) (bleibt SI)
     'A': lambda x: x,                # m/s
 }
 
@@ -321,11 +324,11 @@ def calculate_property(func_name: str, fluid: str, **kwargs) -> float:
 
 # Erstelle Wrapper-Funktionen für den Solver
 def enthalpy(fluid: str, **kwargs) -> float:
-    """Spez. Enthalpie [kJ/kg]"""
+    """Spez. Enthalpie [J/kg]"""
     return calculate_property('enthalpy', fluid, **kwargs)
 
 def entropy(fluid: str, **kwargs) -> float:
-    """Spez. Entropie [kJ/(kg·K)]"""
+    """Spez. Entropie [J/(kg·K)]"""
     return calculate_property('entropy', fluid, **kwargs)
 
 def density(fluid: str, **kwargs) -> float:
@@ -337,7 +340,7 @@ def volume(fluid: str, **kwargs) -> float:
     return calculate_property('volume', fluid, **kwargs)
 
 def intenergy(fluid: str, **kwargs) -> float:
-    """Spez. innere Energie [kJ/kg]"""
+    """Spez. innere Energie [J/kg]"""
     return calculate_property('intenergy', fluid, **kwargs)
 
 def quality(fluid: str, **kwargs) -> float:
@@ -345,11 +348,11 @@ def quality(fluid: str, **kwargs) -> float:
     return calculate_property('quality', fluid, **kwargs)
 
 def temperature(fluid: str, **kwargs) -> float:
-    """Temperatur [°C]"""
+    """Temperatur [K]"""
     return calculate_property('temperature', fluid, **kwargs)
 
 def pressure(fluid: str, **kwargs) -> float:
-    """Druck [bar]"""
+    """Druck [Pa]"""
     return calculate_property('pressure', fluid, **kwargs)
 
 def viscosity(fluid: str, **kwargs) -> float:
@@ -365,11 +368,11 @@ def prandtl(fluid: str, **kwargs) -> float:
     return calculate_property('prandtl', fluid, **kwargs)
 
 def cp(fluid: str, **kwargs) -> float:
-    """Spez. Wärmekapazität bei konst. Druck [kJ/(kg·K)]"""
+    """Spez. Wärmekapazität bei konst. Druck [J/(kg·K)]"""
     return calculate_property('cp', fluid, **kwargs)
 
 def cv(fluid: str, **kwargs) -> float:
-    """Spez. Wärmekapazität bei konst. Volumen [kJ/(kg·K)]"""
+    """Spez. Wärmekapazität bei konst. Volumen [J/(kg·K)]"""
     return calculate_property('cv', fluid, **kwargs)
 
 def soundspeed(fluid: str, **kwargs) -> float:

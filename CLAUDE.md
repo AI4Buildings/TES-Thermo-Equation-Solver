@@ -78,12 +78,13 @@ equation_solver/
 ### Humid Air (humid_air.py)
 - CoolProp HumidAirProp wrapper for psychrometric calculations
 - Syntax: `HumidAir(property, T=..., rh=..., p_tot=...)`
+- **Internal units: SI (K, Pa, J/kg)**
 - **Output properties** (first argument):
   - `T` - Dry bulb temperature [K]
-  - `h` - Specific enthalpy [kJ/kg_dry_air]
+  - `h` - Specific enthalpy [J/kg_dry_air]
   - `rh` - Relative humidity [-] (0-1)
   - `w` - Humidity ratio [kg_water/kg_dry_air]
-  - `p_w` - Partial pressure of water vapor [bar]
+  - `p_w` - Partial pressure of water vapor [Pa]
   - `rho_tot` - Density of humid air [kg/m³]
   - `rho_a` - Density of dry air [kg/m³]
   - `rho_w` - Density of water vapor [kg/m³]
@@ -91,29 +92,31 @@ equation_solver/
   - `T_wb` - Wet bulb temperature [K]
 - **Input parameters** (exactly 3 required):
   - `T` - Temperature [K] (use `25 °C` or `298.15 K`)
-  - `p_tot` - Total pressure [bar]
+  - `p_tot` - Total pressure [Pa] (use `1 bar` or `100000 Pa`)
   - `rh` - Relative humidity [-]
   - `w` - Humidity ratio [kg/kg]
-  - `p_w` - Partial pressure water vapor [bar]
-  - `h` - Enthalpy [kJ/kg]
+  - `p_w` - Partial pressure water vapor [Pa]
+  - `h` - Enthalpy [J/kg]
 - Case-insensitive: `HumidAir` = `humidair`
 
 **Examples:**
 ```
-{Calculate enthalpy}
+{Calculate enthalpy - result in J/kg}
 T_air = 25 °C
-h = HumidAir(h, T=T_air, rh=0.5, p_tot=1)
+p = 1 bar
+h = HumidAir(h, T=T_air, rh=0.5, p_tot=p)
 
 {Calculate temperature from enthalpy}
-T = HumidAir(T, h=50, rh=0.5, p_tot=1)
+h_in = 50000 J/kg
+T = HumidAir(T, h=h_in, rh=0.5, p_tot=p)
 
 {Dew point temperature}
-T_dp = HumidAir(T_dp, T=303.15K, w=0.012, p_tot=1)
+T_dp = HumidAir(T_dp, T=30°C, w=0.012, p_tot=1bar)
 
 {Different parameter combinations}
-w = HumidAir(w, T=25°C, rh=0.6, p_tot=1)
-rh = HumidAir(rh, T=298.15K, w=0.01, p_tot=1)
-rho = HumidAir(rho_tot, T=25°C, rh=0.5, p_tot=1)
+w = HumidAir(w, T=25°C, rh=0.6, p_tot=1bar)
+rh = HumidAir(rh, T=298.15K, w=0.01, p_tot=100000Pa)
+rho = HumidAir(rho_tot, T=25°C, rh=0.5, p_tot=1bar)
 ```
 
 ### Strahlung (radiation.py)
@@ -131,17 +134,22 @@ rho = HumidAir(rho_tot, T=25°C, rh=0.5, p_tot=1)
 
 ## Einheiten
 
-**Wichtig:** Temperaturen werden intern in **Kelvin (K)** verarbeitet. Eingaben mit `°C` werden automatisch konvertiert.
+**Wichtig:** Alle Berechnungen erfolgen intern in **SI-Basiseinheiten** (K, Pa, J, W).
+Eingaben mit anderen Einheiten (°C, bar, kJ) werden automatisch konvertiert.
 
-| Größe | Interne Einheit | Eingabe-Beispiele |
-|-------|-----------------|-------------------|
-| Temperatur T | K | `25 °C`, `298.15 K`, `298.15` |
-| Druck p | bar | `1 bar`, `101325 Pa` |
-| Enthalpie h | kJ/kg | `100 kJ/kg` |
-| Entropie s | kJ/(kg·K) | |
-| Innere Energie u | kJ/kg | |
+| Größe | Interne Einheit (SI) | Eingabe-Beispiele |
+|-------|----------------------|-------------------|
+| Temperatur T | K | `25 °C`, `298.15 K` |
+| Druck p | Pa | `1 bar`, `100000 Pa` |
+| Enthalpie h | J/kg | `100 kJ/kg`, `100000 J/kg` |
+| Entropie s | J/(kg·K) | `1 kJ/(kg*K)`, `1000 J/(kg*K)` |
+| Innere Energie u | J/kg | |
+| Spez. Wärme cp, cv | J/(kg·K) | `1000 J/(kg*K)`, `1 kJ/(kg*K)` |
+| Gaskonstante R | J/(kg·K) | `287 J/(kg*K)` |
 | Dichte rho | kg/m³ | |
 | Spez. Volumen v | m³/kg | |
+| Energie | J | `1 kJ`, `1000 J` |
+| Leistung | W | `1 kW`, `1000 W` |
 | Dampfqualität x | - (0-1) | |
 | Wellenlänge λ | µm | `5 µm`, `5e-6 m` |
 | Spektrale Emission Eb | W/(m²·µm) | |
@@ -150,13 +158,13 @@ rho = HumidAir(rho_tot, T=25°C, rh=0.5, p_tot=1)
 
 ### Humid Air Units
 
-| Property | Unit |
-|----------|------|
-| Enthalpy h | kJ/kg_dry_air |
+| Property | Internal Unit (SI) |
+|----------|-------------------|
+| Enthalpy h | J/kg_dry_air |
 | Humidity ratio w | kg_water/kg_dry_air |
 | Relative humidity rh | - (0-1) |
-| Partial pressure p_w | bar |
-| Total pressure p_tot | bar |
+| Partial pressure p_w | Pa |
+| Total pressure p_tot | Pa |
 | Densities rho_tot, rho_a, rho_w | kg/m³ |
 | Dew point temperature T_dp | K (Anzeige: °C wählbar) |
 | Wet bulb temperature T_wb | K (Anzeige: °C wählbar) |
@@ -198,6 +206,17 @@ p = 1 bar                {Druck}
 sigma = 5.67e-8 W/m^2K^4 {Stefan-Boltzmann}
 L = 4 µm                 {Wellenlänge}
 h = 25 W/m^2K            {Wärmeübergangskoeffizient}
+```
+
+### Konsistente SI-Berechnung
+
+Mit SI-Basiseinheiten funktioniert die Einheiten-Arithmetik korrekt:
+```
+{Ideale Gasgleichung: p*v = R*T}
+T = 20 °C               {wird zu 293.15 K}
+R = 287 J/(kg*K)        {bleibt 287 J/(kg·K)}
+p = 1 bar               {wird zu 100000 Pa}
+p*v = R*T               {v = 287*293.15/100000 = 0.84134 m³/kg}
 ```
 
 ### Automatische Einheiten-Ableitung

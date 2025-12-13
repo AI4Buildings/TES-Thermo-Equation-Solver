@@ -33,27 +33,27 @@ ureg.define('@alias second = s')
 ureg.define('@alias liter = L = l')
 
 
-# Einheiten-Mapping für CoolProp-Funktionen (Ausgabe-Einheiten, Temperatur in K intern)
+# Einheiten-Mapping für CoolProp-Funktionen (Ausgabe-Einheiten, alle in SI)
 COOLPROP_UNITS = {
-    'enthalpy': 'kJ/kg',
-    'entropy': 'kJ/(kg*K)',
+    'enthalpy': 'J/kg',       # SI: J/kg (CoolProp liefert J/kg)
+    'entropy': 'J/(kg*K)',    # SI: J/(kg·K)
     'density': 'kg/m^3',
     'temperature': 'K',
-    'pressure': 'bar',
-    'cp': 'kJ/(kg*K)',
-    'cv': 'kJ/(kg*K)',
+    'pressure': 'Pa',         # SI: Pa (CoolProp liefert Pa)
+    'cp': 'J/(kg*K)',         # SI: J/(kg·K)
+    'cv': 'J/(kg*K)',         # SI: J/(kg·K)
     'viscosity': 'Pa*s',
     'conductivity': 'W/(m*K)',
     'volume': 'm^3/kg',
-    'intenergy': 'kJ/kg',
+    'intenergy': 'J/kg',      # SI: J/kg
     'quality': '',  # dimensionslos
     'prandtl': '',  # dimensionslos
     'soundspeed': 'm/s',
 }
 
-# Einheiten für HumidAir-Funktionen (Temperaturen in K intern)
+# Einheiten für HumidAir-Funktionen (alle in SI)
 HUMID_AIR_UNITS = {
-    'h': 'kJ/kg',
+    'h': 'J/kg',              # SI: J/kg (CoolProp HAPropsSI liefert J/kg)
     'w': 'kg/kg',
     'rh': '',  # dimensionslos (0-1)
     't': 'K',
@@ -62,7 +62,7 @@ HUMID_AIR_UNITS = {
     'rho_tot': 'kg/m^3',
     'rho_a': 'kg/m^3',
     'rho_w': 'kg/m^3',
-    'p_w': 'bar',
+    'p_w': 'Pa',              # SI: Pa
 }
 
 # Einheiten für Strahlungs-Funktionen
@@ -76,19 +76,19 @@ RADIATION_UNITS = {
 
 # Standard-Einheiten für HVAC-Berechnungen
 # Diese Einheiten werden für interne Berechnungen verwendet
-# SI-basiert, damit Einheiten-Arithmetik automatisch funktioniert:
-#   m_dot [kg/s] * Δh [kJ/kg] = Q [kJ/s] = Q [kW]
+# Alle Größen in SI-Basiseinheiten, damit Einheiten-Arithmetik korrekt funktioniert:
+#   p*v = R*T  →  Pa * m³/kg = J/(kg·K) * K  →  konsistent!
 STANDARD_UNITS = {
     # Dimension -> (Ziel-Einheit, pint-kompatibel)
-    '[temperature]': ('K', 'kelvin'),            # Temperatur in K (SI, für CoolProp und Strahlung)
-    '[mass] / [time]': ('kg/s', 'kg/s'),         # Massenstrom in kg/s (SI!)
-    '[length] ** 3 / [time]': ('m^3/s', 'm^3/s'), # Volumenstrom in m³/s (SI!)
+    '[temperature]': ('K', 'kelvin'),            # Temperatur in K
+    '[mass] / [time]': ('kg/s', 'kg/s'),         # Massenstrom in kg/s
+    '[length] ** 3 / [time]': ('m^3/s', 'm^3/s'), # Volumenstrom in m³/s
     '[mass] / [length] ** 3': ('kg/m^3', 'kg/m^3'), # Dichte in kg/m³
-    '[mass] / [length] / [time] ** 2': ('bar', 'bar'),  # Druck in bar (für CoolProp)
-    '[length] ** 2 / [time] ** 2': ('kJ/kg', 'kJ/kg'),  # Spez. Energie in kJ/kg
-    '[length] ** 2 / [time] ** 2 / [temperature]': ('kJ/(kg*K)', 'kJ/(kg*K)'),  # Spez. Wärme
-    '[mass] * [length] ** 2 / [time] ** 3': ('kW', 'kW'),  # Leistung in kW
-    '[mass] * [length] ** 2 / [time] ** 2': ('kJ', 'kJ'),  # Energie in kJ
+    '[mass] / [length] / [time] ** 2': ('Pa', 'Pa'),  # Druck in Pa (SI!)
+    '[length] ** 2 / [time] ** 2': ('J/kg', 'J/kg'),  # Spez. Energie in J/kg (SI!)
+    '[length] ** 2 / [time] ** 2 / [temperature]': ('J/(kg*K)', 'J/(kg*K)'),  # Spez. Wärme (SI!)
+    '[mass] * [length] ** 2 / [time] ** 3': ('W', 'W'),  # Leistung in W (SI!)
+    '[mass] * [length] ** 2 / [time] ** 2': ('J', 'J'),  # Energie in J (SI!)
     '[mass]': ('kg', 'kg'),                      # Masse in kg
     '[length]': ('m', 'm'),                      # Länge in m
     '[time]': ('s', 's'),                        # Zeit in s

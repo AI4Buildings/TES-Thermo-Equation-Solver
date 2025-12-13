@@ -3,19 +3,19 @@ Humid Air Module for the HVAC Equation Solver
 
 Uses CoolProp HumidAirProp for psychrometric calculations.
 
-Units:
-- Temperature T: °C
-- Pressure p_tot: bar
-- Enthalpy h: kJ/kg_dry_air
+Units (SI base units for internal calculations):
+- Temperature T: K
+- Pressure p_tot: Pa
+- Enthalpy h: J/kg_dry_air
 - Humidity ratio w: kg_water/kg_dry_air
 - Relative humidity rh: - (0-1)
-- Partial pressure p_w: bar
+- Partial pressure p_w: Pa
 - Densities rho: kg/m³
 
 Syntax:
-    h = HumidAir(h, T=25, rh=0.5, p_tot=1)
-    w = HumidAir(w, T=30, rh=0.6, p_tot=1)
-    T_dp = HumidAir(T_dp, T=25, w=0.01, p_tot=1)
+    h = HumidAir(h, T=298.15, rh=0.5, p_tot=100000)  # T in K, p in Pa
+    w = HumidAir(w, T=303.15, rh=0.6, p_tot=100000)
+    T_dp = HumidAir(T_dp, T=298.15, w=0.01, p_tot=100000)
 """
 
 import CoolProp.CoolProp as CP
@@ -25,28 +25,30 @@ from scipy.optimize import brentq
 
 # Mapping of output properties
 # User-Name -> (CoolProp-Key, conversion function SI->User)
+# Da wir intern SI verwenden, ist keine Konvertierung mehr nötig!
 OUTPUT_MAP = {
-    't': ('T', lambda x: x),                        # K -> K (bleibt in K)
-    'h': ('Hda', lambda x: x / 1000),               # J/kg -> kJ/kg
+    't': ('T', lambda x: x),                        # K -> K
+    'h': ('Hda', lambda x: x),                      # J/kg -> J/kg (bleibt SI)
     'rh': ('R', lambda x: x),                       # dimensionless (0-1)
     'w': ('W', lambda x: x),                        # kg_water/kg_dry_air
-    'p_w': ('psi_w', None),                         # Special handling: psi_w * P -> bar
+    'p_w': ('psi_w', None),                         # Special handling: psi_w * P -> Pa
     'rho_tot': ('Vha', lambda x: 1/x),              # m³/kg -> kg/m³ (humid air density)
     'rho_a': ('Vda', lambda x: 1/x),                # m³/kg -> kg/m³ (dry air density)
     'rho_w': (None, None),                          # Special handling: W / Vda
-    't_dp': ('Tdp', lambda x: x),                   # K -> K (bleibt in K)
-    't_wb': ('Twb', lambda x: x),                   # K -> K (bleibt in K)
+    't_dp': ('Tdp', lambda x: x),                   # K -> K
+    't_wb': ('Twb', lambda x: x),                   # K -> K
 }
 
 # Mapping of input parameters
 # User-Name -> (CoolProp-Key, conversion function User->SI)
+# Da wir intern SI verwenden (Pa, J/kg, K), ist keine Konvertierung mehr nötig!
 INPUT_MAP = {
-    't': ('T', lambda x: x),                        # K -> K (bereits in K)
-    'p_tot': ('P', lambda x: x * 1e5),              # bar -> Pa
+    't': ('T', lambda x: x),                        # K -> K
+    'p_tot': ('P', lambda x: x),                    # Pa -> Pa (bereits SI)
     'w': ('W', lambda x: x),                        # kg_water/kg_dry_air
     'rh': ('R', lambda x: x),                       # dimensionless (0-1)
     'p_w': ('psi_w', None),                         # Special handling
-    'h': ('Hda', lambda x: x * 1000),               # kJ/kg -> J/kg
+    'h': ('Hda', lambda x: x),                      # J/kg -> J/kg (bereits SI)
 }
 
 
@@ -169,7 +171,7 @@ def HumidAir(output_prop: str, **kwargs) -> float:
 
     # Convert p_w to psi_w if p_w was given as input
     if '_p_w_input' in inputs:
-        p_w_pa = inputs.pop('_p_w_input') * 1e5  # bar -> Pa
+        p_w_pa = inputs.pop('_p_w_input')  # Already in Pa (SI)
         if p_tot_pa is None:
             raise ValueError("When using p_w as input, p_tot must also be specified")
         # psi_w = p_w / p_tot
@@ -208,8 +210,8 @@ def HumidAir(output_prop: str, **kwargs) -> float:
             # Get total pressure
             if p_tot_pa is None:
                 p_tot_pa = CP.HAPropsSI('P', keys[0], values[0], keys[1], values[1], keys[2], values[2])
-            # p_w = psi_w * p_tot (convert to bar)
-            return (psi_w * p_tot_pa) / 1e5
+            # p_w = psi_w * p_tot (already in Pa, SI)
+            return psi_w * p_tot_pa
 
         # Normal case
         cp_output_key, converter = OUTPUT_MAP[output_key]
